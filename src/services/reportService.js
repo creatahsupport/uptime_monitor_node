@@ -98,14 +98,15 @@ async function generatePdf({ period, summary, checks }) {
     doc.on('end', () => resolve(Buffer.concat(buffers)));
     doc.on('error', reject);
 
-    // Helpers
+    // Helpers — all use configured timezone (TZ env var), never raw UTC
+    const TZ = process.env.TZ || 'Asia/Kolkata';
     const formatDateTime = (dateStr) => {
       const d = new Date(dateStr);
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + 
-             d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).toLowerCase();
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: TZ }) + ' ' +
+             d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: TZ }).toLowerCase();
     };
-    const formatDate = (dateStr) => new Date(dateStr).toISOString().substring(0, 10);
-    const formatTime = (dateStr) => new Date(dateStr).toISOString().substring(11, 16);
+    const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString('en-CA', { timeZone: TZ }); // en-CA → YYYY-MM-DD
+    const formatTime = (dateStr) => new Date(dateStr).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
 
     const blueTheme = '#1E65B5';
 
@@ -161,7 +162,7 @@ async function generatePdf({ period, summary, checks }) {
     // Header borders
     doc.lineWidth(0.5).strokeColor('#ffffff');
     x = 40;
-    dHdrs.forEach((h, i) => { x += dColW[i]; doc.moveTo(x, y).lineTo(x, y + 18).stroke(); });
+    dHdrs.forEach((_h, i) => { x += dColW[i]; doc.moveTo(x, y).lineTo(x, y + 18).stroke(); });
     y += 18;
 
     // Table Rows

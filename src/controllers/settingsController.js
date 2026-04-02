@@ -1,5 +1,6 @@
 const { Setting } = require('../models');
 const { rescheduleCronJob } = require('../jobs/monitorJob');
+const { rescheduleMonthlyReportJob } = require('../jobs/monthlyReportJob');
 
 exports.getCronSetting = async (req, res) => {
   try {
@@ -33,6 +34,46 @@ exports.updateCronSetting = async (req, res) => {
   } catch (error) {
     console.error('Error updating cron setting:', error);
     res.status(500).json({ success: false, message: 'Server error updating cron' });
+  }
+};
+
+exports.getMonthlyReportDay = async (req, res) => {
+  try {
+    const [daySetting, hourSetting, minuteSetting] = await Promise.all([
+      Setting.findOne({ where: { key: 'monthly_report_day' } }),
+      Setting.findOne({ where: { key: 'monthly_report_hour' } }),
+      Setting.findOne({ where: { key: 'monthly_report_minute' } }),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        day:    daySetting    ? parseInt(daySetting.value)    : 1,
+        hour:   hourSetting   ? parseInt(hourSetting.value)   : 0,
+        minute: minuteSetting ? parseInt(minuteSetting.value) : 0,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+exports.updateMonthlyReportDay = async (req, res) => {
+  try {
+    const day    = parseInt(req.body.day);
+    const hour   = parseInt(req.body.hour);
+    const minute = parseInt(req.body.minute);
+
+    if (!day || day < 1 || day > 28)
+      return res.status(400).json({ success: false, message: 'Day must be between 1 and 28' });
+    if (isNaN(hour) || hour < 0 || hour > 23)
+      return res.status(400).json({ success: false, message: 'Hour must be between 0 and 23' });
+    if (isNaN(minute) || minute < 0 || minute > 59)
+      return res.status(400).json({ success: false, message: 'Minute must be between 0 and 59' });
+
+    await rescheduleMonthlyReportJob(day, hour, minute);
+    res.json({ success: true, message: 'Monthly report schedule updated', data: { day, hour, minute } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
