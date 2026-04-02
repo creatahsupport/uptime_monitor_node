@@ -53,7 +53,7 @@ async function start() {
   await testConnection();
   await syncDb();
   startCronJob();
-  startMonthlyReportJob();
+  await startMonthlyReportJob();
   server.listen(PORT, () => console.log(`🚀 API running on http://localhost:${PORT}`));
 }
 
