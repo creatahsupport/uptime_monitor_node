@@ -4,6 +4,7 @@ const { MonitoredUrl, MonitorCheck } = require('../models');
 async function getAll(_req, res) {
   try {
     const urls = await MonitoredUrl.findAll({
+      where: { is_deleted: false },
       order: [['created_at', 'DESC']],
       attributes: {
         include: [[fn('COUNT', col('checks.id')), 'total_checks']],
@@ -20,7 +21,7 @@ async function getAll(_req, res) {
 
 async function getOne(req, res) {
   try {
-    const url = await MonitoredUrl.findByPk(req.params.id);
+    const url = await MonitoredUrl.findOne({ where: { id: req.params.id, is_deleted: false } });
     if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
     res.json({ success: true, data: url });
   } catch (err) {
@@ -49,7 +50,7 @@ async function create(req, res) {
 
 async function update(req, res) {
   try {
-    const url = await MonitoredUrl.findByPk(req.params.id);
+    const url = await MonitoredUrl.findOne({ where: { id: req.params.id, is_deleted: false } });
     if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
 
     const allowed = ['name', 'url', 'client_email', 'is_active'];
@@ -69,9 +70,9 @@ async function update(req, res) {
 
 async function remove(req, res) {
   try {
-    const url = await MonitoredUrl.findByPk(req.params.id);
+    const url = await MonitoredUrl.findOne({ where: { id: req.params.id, is_deleted: false } });
     if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
-    await url.destroy();
+    await url.update({ is_deleted: true });
     res.json({ success: true, message: 'URL deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -82,7 +83,7 @@ async function getChecks(req, res) {
   const limit  = Math.min(parseInt(req.query.limit) || 50, 200);
   const offset = parseInt(req.query.offset) || 0;
   try {
-    const url = await MonitoredUrl.findByPk(req.params.id);
+    const url = await MonitoredUrl.findOne({ where: { id: req.params.id, is_deleted: false } });
     if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
     const checks = await MonitorCheck.findAll({
       where: { url_id: req.params.id },

@@ -1,8 +1,14 @@
 const cron = require('node-cron');
 const { sequelize } = require('../models');
 const { QueryTypes } = require('sequelize');
+const { Setting } = require('../models');
 const { buildReportData, generatePdf } = require('../services/reportService');
 const { sendMonthlyReport } = require('../services/emailService');
+
+let currentMonthlyJob = null;
+const DEFAULT_REPORT_DAY    = 1;
+const DEFAULT_REPORT_HOUR   = 0;
+const DEFAULT_REPORT_MINUTE = 0;
 
 function getPreviousMonthString() {
   const d = new Date();
@@ -69,12 +75,48 @@ async function runMonthlyReportProcess() {
   }
 }
 
-function startMonthlyReportJob() {
-  // Run on the 1st of every month at 00:00 (midnight)
-  cron.schedule('0 0 1 * *', () => {
+function scheduleMonthlyJob(day, hour, minute) {
+  if (currentMonthlyJob) {
+    currentMonthlyJob.stop();
+  }
+  const cronExpr = `${minute} ${hour} ${day} * *`;
+  currentMonthlyJob = cron.schedule(cronExpr, () => {
     runMonthlyReportProcess();
   });
-  console.log(`⏰ Monthly Report Cron job scheduled for the 1st of every month at 00:00.`);
+  console.log(`⏰ Monthly Report Cron job scheduled: day ${day} at ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} (${cronExpr})`);
 }
 
-module.exports = { startMonthlyReportJob, runMonthlyReportProcess };
+async function startMonthlyReportJob() {
+  let day = DEFAULT_REPORT_DAY, hour = DEFAULT_REPORT_HOUR, minute = DEFAULT_REPORT_MINUTE;
+  try {
+    const [daySetting] = await Setting.findOrCreate({
+      where: { key: 'monthly_report_day' },
+      defaults: { value: String(DEFAULT_REPORT_DAY) },
+    });
+    const [hourSetting] = await Setting.findOrCreate({
+      where: { key: 'monthly_report_hour' },
+      defaults: { value: String(DEFAULT_REPORT_HOUR) },
+    });
+    const [minuteSetting] = await Setting.findOrCreate({
+      where: { key: 'monthly_report_minute' },
+      defaults: { value: String(DEFAULT_REPORT_MINUTE) },
+    });
+    day    = parseInt(daySetting.value)    || DEFAULT_REPORT_DAY;
+    hour   = parseInt(hourSetting.value)   ?? DEFAULT_REPORT_HOUR;
+    minute = parseInt(minuteSetting.value) ?? DEFAULT_REPORT_MINUTE;
+  } catch (err) {
+    console.error('[MonthlyReportJob] Failed to read settings:', err.message);
+  }
+  scheduleMonthlyJob(day, hour, minute);
+}
+
+async function rescheduleMonthlyReportJob(day, hour, minute) {
+  await Promise.all([
+    Setting.upsert({ key: 'monthly_report_day',    value: String(day) }),
+    Setting.upsert({ key: 'monthly_report_hour',   value: String(hour) }),
+    Setting.upsert({ key: 'monthly_report_minute', value: String(minute) }),
+  ]);
+  scheduleMonthlyJob(day, hour, minute);
+}
+
+module.exports = { startMonthlyReportJob, runMonthlyReportProcess, rescheduleMonthlyReportJob };

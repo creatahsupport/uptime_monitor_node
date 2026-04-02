@@ -39,6 +39,10 @@ const MonitoredUrl = sequelize.define('MonitoredUrl', {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  is_deleted: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
 }, {
   tableName:  'monitored_urls',
   timestamps: true,

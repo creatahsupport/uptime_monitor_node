@@ -118,7 +118,7 @@ async function handleStatusTransition(urlRow, newStatus) {
 async function runAllChecks() {
   console.log(`[${new Date().toISOString()}] Starting monitor run…`);
 
-  const urls = await MonitoredUrl.findAll({ where: { is_active: true } });
+  const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
 
   if (!urls.length) {
     console.log('No active URLs to check.');

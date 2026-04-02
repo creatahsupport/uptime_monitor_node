@@ -9,7 +9,7 @@ async function getMonthlyStats(req, res) {
   const replacements   = { ...(month ? { month } : {}), ...(url_id ? { urlId: parseInt(url_id) } : {}) };
 
   // Always return total active URL count (unfiltered)
-  const total_urls = await MonitoredUrl.count({ where: { is_active: true } });
+  const total_urls = await MonitoredUrl.count({ where: { is_active: true, is_deleted: false } });
 
   try {
     const monthFilter = month ? "AND DATE_FORMAT(mc.checked_at, '%Y-%m') = :month" : '';
@@ -86,7 +86,7 @@ async function getRecentFailures(req, res) {
          mc.error_message,
          mc.checked_at
        FROM monitor_checks mc
-       JOIN monitored_urls u ON u.id = mc.url_id
+       JOIN monitored_urls u ON u.id = mc.url_id AND u.is_deleted = 0
        WHERE mc.status = 'down'
          ${monthFilter} ${urlFilter}
        ORDER BY mc.checked_at DESC
@@ -102,14 +102,14 @@ async function getRecentFailures(req, res) {
 // GET /api/dashboard/stats  (kept for backward compat)
 async function getStats(_req, res) {
   try {
-    const total_urls    = await MonitoredUrl.count({ where: { is_active: true } });
-    const urls_up       = await MonitoredUrl.count({ where: { is_active: true, current_status: 'up' } });
-    const urls_down     = await MonitoredUrl.count({ where: { is_active: true, current_status: 'down' } });
+    const total_urls    = await MonitoredUrl.count({ where: { is_active: true, is_deleted: false } });
+    const urls_up       = await MonitoredUrl.count({ where: { is_active: true, is_deleted: false, current_status: 'up' } });
+    const urls_down     = await MonitoredUrl.count({ where: { is_active: true, is_deleted: false, current_status: 'down' } });
     const open_incidents = await Incident.count({ where: { resolved_at: null } });
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const url_stats = await MonitoredUrl.findAll({
-      where: { is_active: true },
+      where: { is_active: true, is_deleted: false },
       attributes: [
         'id', 'name', 'url', 'current_status', 'last_checked_at',
         [fn('COUNT', col('checks.id')), 'total_checks'],
