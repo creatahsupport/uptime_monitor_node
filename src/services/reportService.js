@@ -106,7 +106,7 @@ async function generatePdf({ period, summary, checks }) {
              d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: TZ }).toLowerCase();
     };
     const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString('en-CA', { timeZone: TZ }); // en-CA → YYYY-MM-DD
-    const formatTime = (dateStr) => new Date(dateStr).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
+    const formatTime = (dateStr) => new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: TZ });
 
     const blueTheme = '#1E65B5';
 

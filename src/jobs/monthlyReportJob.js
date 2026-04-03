@@ -20,56 +20,54 @@ function getPreviousMonthString() {
 
 async function runMonthlyReportProcess() {
   const month = getPreviousMonthString();
-  console.log(`[MonthlyReportJob] Starting report generation for ${month}...`);
+  console.log(`[MonthlyReportJob] ── Starting for month: ${month} ──`);
 
   try {
-    // Get all unique client emails that have monitored URLs
     const clients = await sequelize.query(
-      `SELECT DISTINCT client_email FROM monitored_urls WHERE client_email IS NOT NULL AND client_email != ''`,
+      `SELECT DISTINCT client_email FROM monitored_urls WHERE client_email IS NOT NULL AND client_email != '' AND is_deleted = 0`,
       { type: QueryTypes.SELECT }
     );
 
     if (!clients || clients.length === 0) {
-      console.log(`[MonthlyReportJob] No client emails configured. Skipping.`);
+      console.log(`[MonthlyReportJob] No client emails found. Skipping.`);
       return;
     }
 
+    console.log(`[MonthlyReportJob] Found ${clients.length} client(s).`);
+
     for (const client of clients) {
       const email = client.client_email;
-      
-      // Get all URLs belonging to this client to see if they had activity
+
       const urls = await sequelize.query(
-        `SELECT id FROM monitored_urls WHERE client_email = :email`,
+        `SELECT id, name FROM monitored_urls WHERE client_email = :email AND is_deleted = 0`,
         { replacements: { email }, type: QueryTypes.SELECT }
       );
 
-      if (!urls.length) continue;
+      if (!urls.length) {
+        console.log(`[MonthlyReportJob] No URLs for ${email}. Skipping.`);
+        continue;
+      }
 
-      // We generate the report by not filtering a specific urlId, but since a client could have multiple URLs, 
-      // the `buildReportData` function currently generates it for almost everything if urlId is omitted.
-      // Wait, if we want to send the client ONLY their URLs, we'd need to modify `buildReportData` to accept a clientEmail, 
-      // or we just call buildReportData for each url and merge them. But `buildReportData` already supports an array or we can just fetch all data and generate.
-      // Let's modify `buildReportData` later or we can call it for the specific URL.
-      // Wait, the prompt says "start the month report sent to corresponding url owner every month 1 date full month report"
-      
       for (const u of urls) {
         try {
           const reportData = await buildReportData(month, u.id);
-          if (reportData.checks && reportData.checks.length > 0) {
-            const pdfBuffer = await generatePdf(reportData);
-            await sendMonthlyReport({
-              clientEmail: email,
-              urlName: reportData.summary[0]?.name || 'Your Website',
-              month,
-              pdfBuffer
-            });
-            console.log(`[MonthlyReportJob] Sent report for URL ${u.id} to ${email}`);
-          }
+          console.log(`[MonthlyReportJob] URL ${u.id} → ${reportData.checks.length} checks found for ${month}`);
+
+          const pdfBuffer = await generatePdf(reportData);
+          await sendMonthlyReport({
+            clientEmail: email,
+            urlName: u.name,
+            month,
+            pdfBuffer
+          });
+          console.log(`[MonthlyReportJob] ✅ Report sent for URL ${u.id} to ${email}`);
         } catch (error) {
-          console.error(`[MonthlyReportJob] Error generating report for URL ${u.id}:`, error);
+          console.error(`[MonthlyReportJob] ❌ Error for URL ${u.id}:`, error.message);
         }
       }
     }
+
+    console.log(`[MonthlyReportJob] ── Done ──`);
   } catch (err) {
     console.error('[MonthlyReportJob] Fatal error:', err.message);
   }
@@ -80,10 +78,11 @@ function scheduleMonthlyJob(day, hour, minute) {
     currentMonthlyJob.stop();
   }
   const cronExpr = `${minute} ${hour} ${day} * *`;
+  const tz = process.env.TZ || 'Asia/Kolkata';
   currentMonthlyJob = cron.schedule(cronExpr, () => {
     runMonthlyReportProcess();
-  });
-  console.log(`⏰ Monthly Report Cron job scheduled: day ${day} at ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} (${cronExpr})`);
+  }, { timezone: tz });
+  console.log(`⏰ Monthly Report Cron job scheduled: day ${day} at ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} ${tz} (${cronExpr})`);
 }
 
 async function startMonthlyReportJob() {

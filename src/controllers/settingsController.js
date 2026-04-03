@@ -1,6 +1,6 @@
 const { Setting } = require('../models');
 const { rescheduleCronJob } = require('../jobs/monitorJob');
-const { rescheduleMonthlyReportJob } = require('../jobs/monthlyReportJob');
+const { rescheduleMonthlyReportJob, runMonthlyReportProcess } = require('../jobs/monthlyReportJob');
 
 exports.getCronSetting = async (req, res) => {
   try {
@@ -34,6 +34,17 @@ exports.updateCronSetting = async (req, res) => {
   } catch (error) {
     console.error('Error updating cron setting:', error);
     res.status(500).json({ success: false, message: 'Server error updating cron' });
+  }
+};
+
+exports.runMonthlyReportNow = async (_req, res) => {
+  try {
+    runMonthlyReportProcess().catch(err =>
+      console.error('[MonthlyReport] Manual run error:', err.message)
+    );
+    res.json({ success: true, message: 'Monthly report process started' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
