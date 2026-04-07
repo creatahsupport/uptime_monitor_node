@@ -20,6 +20,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.7",
     "pdfkit": "^0.14.0",
+    "puppeteer-core": "^24.40.0",
     "sequelize": "^6.37.8"
   },
   "devDependencies": {

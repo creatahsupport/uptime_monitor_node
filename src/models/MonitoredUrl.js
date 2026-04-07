@@ -17,14 +17,17 @@ const MonitoredUrl = sequelize.define('MonitoredUrl', {
     allowNull: false,
     validate: {
       notEmpty: { msg: 'URL is required' },
-      isUrl:    { msg: 'Must be a valid URL starting with http:// or https://' },
+      noSpaces(value) {
+        if (/\s/.test(value)) throw new Error('URL contains invalid characters (spaces are not allowed)');
+      },
+      isUrl: { msg: 'URL must start with http:// or https://' },
     },
   },
   client_email: {
     type: DataTypes.STRING(255),
     allowNull: false,
     validate: {
-      isEmail: { msg: 'client_email must be a valid email address' },
+      isEmail: { msg: 'Please enter a valid email address' },
     },
   },
   is_active: {

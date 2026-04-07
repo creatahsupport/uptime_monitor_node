@@ -24,6 +24,7 @@ async function getMonthlyStats(req, res) {
          )                                                            AS uptime_pct,
          ROUND(AVG(mc.load_time_ms), 0)                              AS avg_response_ms
        FROM monitor_checks mc
+       JOIN monitored_urls u ON u.id = mc.url_id AND u.is_deleted = 0
        WHERE 1=1 ${monthFilter} ${urlFilter}`,
       { replacements, type: QueryTypes.SELECT }
     );
@@ -38,6 +39,7 @@ async function getMonthlyStats(req, res) {
          )                                                            AS uptime_pct,
          ROUND(AVG(mc.load_time_ms), 0)                              AS avg_load_ms
        FROM monitor_checks mc
+       JOIN monitored_urls u ON u.id = mc.url_id AND u.is_deleted = 0
        WHERE 1=1 ${monthFilter} ${urlFilter}
        GROUP BY DATE(mc.checked_at)
        ORDER BY check_date ASC`,
@@ -62,7 +64,7 @@ async function getMonthlyStats(req, res) {
 // GET /api/dashboard/recent-failures?month=2026-03&url_id=1&limit=50
 async function getRecentFailures(req, res) {
   const { month, url_id } = req.query;
-  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const limit = Math.min(parseInt(req.query.limit) || 50, 500);
 
   const monthFilter = month ? "AND DATE_FORMAT(mc.checked_at, '%Y-%m') = :month" : '';
   const urlFilter   = url_id ? 'AND mc.url_id = :urlId' : '';

@@ -5,14 +5,17 @@ require('dotenv').config();
 
 async function login(req, res) {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
+    const { username: rawUsername, password } = req.body;
+    if (!rawUsername || !password) {
       return res.status(400).json({ success: false, message: 'Username and password are required' });
     }
 
+    const username = rawUsername.trim();
+
+    // Case-sensitive lookup: find by username then verify exact match in JS
     const user = await User.findOne({ where: { username } });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid username' });
+    if (!user || user.username !== username) {
+      return res.status(401).json({ success: false, message: 'No account found with this username' });
     }
 
     const isValid = await bcrypt.compare(password, user.password);

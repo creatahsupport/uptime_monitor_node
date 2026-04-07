@@ -1,11 +1,17 @@
-const axios = require('axios');
-const { Op } = require('sequelize');
+const puppeteer = require('puppeteer-core');
+const path      = require('path');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
 require('dotenv').config();
 
-const GOOD_MS    = parseInt(process.env.LOAD_TIME_GOOD)    || 1000;
-const AVERAGE_MS = parseInt(process.env.LOAD_TIME_AVERAGE) || 3000;
+const GOOD_MS    = parseInt(process.env.LOAD_TIME_GOOD)    || 2000;
+const AVERAGE_MS = parseInt(process.env.LOAD_TIME_AVERAGE) || 4000;
+
+const CHROME_PATH = process.env.CHROME_PATH ||
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+
+// Persist Chrome profile/cache across runs so repeat checks use cached assets
+const CHROME_CACHE_DIR = path.join(__dirname, '../../.chrome-cache');
 
 function classifyLoadTime(ms) {
   if (ms == null) return null;
@@ -14,29 +20,59 @@ function classifyLoadTime(ms) {
   return 'bad';
 }
 
-async function checkUrl(urlRow) {
-  const start = Date.now();
-  let status          = 'down';
-  let loadTimeMs      = null;
-  let httpStatusCode  = null;
-  let errorMessage    = null;
+async function launchBrowser() {
+  return puppeteer.launch({
+    executablePath: CHROME_PATH,
+    headless: true,
+    userDataDir: CHROME_CACHE_DIR,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ],
+  });
+}
+
+async function checkUrl(urlRow, browser) {
+  let status         = 'down';
+  let loadTimeMs     = null;
+  let httpStatusCode = null;
+  let errorMessage   = null;
 
   try {
-    const response = await axios.get(urlRow.url, {
-      timeout: 15000,
-      validateStatus: s => s < 500,
+    const page = await browser.newPage();
+
+    // Capture HTTP status from the main navigation response
+    let mainStatus = null;
+    page.on('response', response => {
+      if (mainStatus === null && response.url() === urlRow.url) {
+        mainStatus = response.status();
+      }
     });
-    if (response.status < 400) {
-      status        = 'up';
-      loadTimeMs    = Date.now() - start;
-      httpStatusCode = response.status;
+
+    const response = await page.goto(urlRow.url, {
+      waitUntil: 'load',
+      timeout:   120000,
+    });
+
+    // Use browser's Navigation Timing Level 2 API — matches Chrome DevTools "Load" time
+    const navTiming = await page.evaluate(() => {
+      const t = performance.getEntriesByType('navigation')[0];
+      return t ? Math.round(t.loadEventEnd - t.startTime) : null;
+    });
+    loadTimeMs     = navTiming > 0 ? navTiming : null;
+    httpStatusCode = mainStatus || (response ? response.status() : null);
+
+    if (httpStatusCode && httpStatusCode < 400) {
+      status = 'up';
     } else {
-      httpStatusCode = response.status;
-      errorMessage   = `HTTP ${response.status}`;
+      errorMessage = `HTTP ${httpStatusCode}`;
     }
+
+    await page.close();
   } catch (err) {
     errorMessage = err.message.slice(0, 255);
-    loadTimeMs   = Date.now() - start;
   }
 
   const performanceLabel = status === 'up' ? classifyLoadTime(loadTimeMs) : null;
@@ -125,11 +161,12 @@ async function runAllChecks() {
     return;
   }
 
+  const browser = await launchBrowser();
   const failures = [];
 
   for (const urlRow of urls) {
     try {
-      const result     = await checkUrl(urlRow);
+      const result     = await checkUrl(urlRow, browser);
       const transition = await handleStatusTransition(urlRow, result.status);
 
       console.log(
@@ -143,6 +180,8 @@ async function runAllChecks() {
       console.error(`  Error checking ${urlRow.url}:`, err.message);
     }
   }
+
+  await browser.close();
 
   // Send one internal summary email for all failures this run
   if (failures.length) {
@@ -163,4 +202,13 @@ async function runAllChecks() {
   );
 }
 
-module.exports = { runAllChecks, checkUrl };
+async function checkUrlSingle(urlRow) {
+  const browser = await launchBrowser();
+  try {
+    return await checkUrl(urlRow, browser);
+  } finally {
+    await browser.close();
+  }
+}
+
+module.exports = { runAllChecks, checkUrl: checkUrlSingle };
