@@ -1,5 +1,4 @@
 const puppeteer = require('puppeteer-core');
-const path      = require('path');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
 require('dotenv').config();
@@ -9,9 +8,6 @@ const AVERAGE_MS = parseInt(process.env.LOAD_TIME_AVERAGE) || 4000;
 
 const CHROME_PATH = process.env.CHROME_PATH ||
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-
-// Persist Chrome profile/cache across runs so repeat checks use cached assets
-const CHROME_CACHE_DIR = path.join(__dirname, '../../.chrome-cache');
 
 function classifyLoadTime(ms) {
   if (ms == null) return null;
@@ -24,7 +20,6 @@ async function launchBrowser() {
   return puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: true,
-    userDataDir: CHROME_CACHE_DIR,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -151,55 +146,62 @@ async function handleStatusTransition(urlRow, newStatus) {
   return 'unchanged';
 }
 
+let isRunning = false;
+
 async function runAllChecks() {
-  console.log(`[${new Date().toISOString()}] Starting monitor run…`);
-
-  const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
-
-  if (!urls.length) {
-    console.log('No active URLs to check.');
+  if (isRunning) {
+    console.log('⏭  Monitor run skipped — previous run still in progress.');
     return;
   }
+  isRunning = true;
+  console.log(`[${new Date().toISOString()}] Starting monitor run…`);
 
-  const browser = await launchBrowser();
-  const failures = [];
+  try {
+    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
 
-  for (const urlRow of urls) {
-    try {
-      const result     = await checkUrl(urlRow, browser);
-      const transition = await handleStatusTransition(urlRow, result.status);
-
-      console.log(
-        `  [${result.status.toUpperCase()}] ${urlRow.name} — ${result.loadTimeMs}ms — ${transition}`
-      );
-
-      if (result.status === 'down') {
-        failures.push({ name: urlRow.name, url: urlRow.url, detected_at: new Date() });
-      }
-    } catch (err) {
-      console.error(`  Error checking ${urlRow.url}:`, err.message);
+    if (!urls.length) {
+      console.log('No active URLs to check.');
+      return;
     }
-  }
 
-  await browser.close();
+    const browser = await launchBrowser();
 
-  // Send one internal summary email for all failures this run
-  if (failures.length) {
-    try {
-      const recipients = await InternalRecipient.findAll({ attributes: ['email'] });
-      const emails     = recipients.map(r => r.email);
-      if (emails.length) {
-        await emailService.sendInternalFailureSummary({ recipients: emails, failures });
-        console.log(`  Internal summary sent to ${emails.length} recipient(s).`);
+    const results = await Promise.allSettled(
+      urls.map(async (urlRow) => {
+        const result     = await checkUrl(urlRow, browser);
+        const transition = await handleStatusTransition(urlRow, result.status);
+        console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — ${result.loadTimeMs}ms — ${transition}`);
+        return { urlRow, result };
+      })
+    );
+
+    await browser.close();
+
+    const failures = results
+      .filter(r => r.status === 'fulfilled' && r.value.result.status === 'down')
+      .map(r => ({ name: r.value.urlRow.name, url: r.value.urlRow.url, detected_at: new Date() }));
+
+    results
+      .filter(r => r.status === 'rejected')
+      .forEach(r => console.error('  Check error:', r.reason?.message));
+
+    if (failures.length) {
+      try {
+        const recipients = await InternalRecipient.findAll({ attributes: ['email'] });
+        const emails     = recipients.map(r => r.email);
+        if (emails.length) {
+          await emailService.sendInternalFailureSummary({ recipients: emails, failures });
+          console.log(`  Internal summary sent to ${emails.length} recipient(s).`);
+        }
+      } catch (e) {
+        console.error('  Failed to send internal summary:', e.message);
       }
-    } catch (e) {
-      console.error('  Failed to send internal summary:', e.message);
     }
-  }
 
-  console.log(
-    `[${new Date().toISOString()}] Run complete — ${urls.length} checked, ${failures.length} down.`
-  );
+    console.log(`[${new Date().toISOString()}] Run complete — ${urls.length} checked, ${failures.length} down.`);
+  } finally {
+    isRunning = false;
+  }
 }
 
 async function checkUrlSingle(urlRow) {

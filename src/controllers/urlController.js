@@ -5,7 +5,7 @@ async function getAll(_req, res) {
   try {
     const urls = await MonitoredUrl.findAll({
       where: { is_deleted: false },
-      order: [['created_at', 'ASC']],
+      order: [['created_at', 'DESC']],
       attributes: {
         include: [[fn('COUNT', col('checks.id')), 'total_checks']],
       },
