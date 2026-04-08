@@ -1,13 +1,10 @@
-const puppeteer = require('puppeteer-core');
+const axios = require('axios');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
 require('dotenv').config();
 
 const GOOD_MS    = parseInt(process.env.LOAD_TIME_GOOD)    || 2000;
 const AVERAGE_MS = parseInt(process.env.LOAD_TIME_AVERAGE) || 4000;
-
-const CHROME_PATH = process.env.CHROME_PATH ||
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 function classifyLoadTime(ms) {
   if (ms == null) return null;
@@ -16,57 +13,30 @@ function classifyLoadTime(ms) {
   return 'bad';
 }
 
-async function launchBrowser() {
-  return puppeteer.launch({
-    executablePath: CHROME_PATH,
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-    ],
-  });
-}
-
-async function checkUrl(urlRow, browser) {
+async function checkUrl(urlRow) {
   let status         = 'down';
   let loadTimeMs     = null;
   let httpStatusCode = null;
   let errorMessage   = null;
 
+  const start = Date.now();
   try {
-    const page = await browser.newPage();
-
-    // Capture HTTP status from the main navigation response
-    let mainStatus = null;
-    page.on('response', response => {
-      if (mainStatus === null && response.url() === urlRow.url) {
-        mainStatus = response.status();
-      }
+    const response = await axios.get(urlRow.url, {
+      timeout: 30000,
+      maxRedirects: 5,
+      validateStatus: () => true, // don't throw on any status code
+      headers: { 'User-Agent': 'UptimeMonitor/1.0' },
     });
+    loadTimeMs     = Date.now() - start;
+    httpStatusCode = response.status;
 
-    const response = await page.goto(urlRow.url, {
-      waitUntil: 'load',
-      timeout:   120000,
-    });
-
-    // Use browser's Navigation Timing Level 2 API — matches Chrome DevTools "Load" time
-    const navTiming = await page.evaluate(() => {
-      const t = performance.getEntriesByType('navigation')[0];
-      return t ? Math.round(t.loadEventEnd - t.startTime) : null;
-    });
-    loadTimeMs     = navTiming > 0 ? navTiming : null;
-    httpStatusCode = mainStatus || (response ? response.status() : null);
-
-    if (httpStatusCode && httpStatusCode < 400) {
+    if (httpStatusCode < 400) {
       status = 'up';
     } else {
       errorMessage = `HTTP ${httpStatusCode}`;
     }
-
-    await page.close();
   } catch (err) {
+    loadTimeMs   = Date.now() - start;
     errorMessage = err.message.slice(0, 255);
   }
 
@@ -164,18 +134,14 @@ async function runAllChecks() {
       return;
     }
 
-    const browser = await launchBrowser();
-
     const results = await Promise.allSettled(
       urls.map(async (urlRow) => {
-        const result     = await checkUrl(urlRow, browser);
+        const result     = await checkUrl(urlRow);
         const transition = await handleStatusTransition(urlRow, result.status);
         console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — ${result.loadTimeMs}ms — ${transition}`);
         return { urlRow, result };
       })
     );
-
-    await browser.close();
 
     const failures = results
       .filter(r => r.status === 'fulfilled' && r.value.result.status === 'down')
@@ -204,13 +170,4 @@ async function runAllChecks() {
   }
 }
 
-async function checkUrlSingle(urlRow) {
-  const browser = await launchBrowser();
-  try {
-    return await checkUrl(urlRow, browser);
-  } finally {
-    await browser.close();
-  }
-}
-
-module.exports = { runAllChecks, checkUrl: checkUrlSingle };
+module.exports = { runAllChecks, checkUrl };

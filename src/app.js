@@ -42,9 +42,29 @@ app.use('/api/dashboard', authenticate, dashboardRoutes);
 app.use('/api/reports', authenticate, reportRoutes);
 app.use('/api/settings', authenticate, settingsRoutes);
 
-app.post('/api/monitor/run', authenticate, (_req, res) => {
-  runAllChecks().catch(err => console.error('Manual run error:', err.message));
-  res.json({ success: true, message: 'Monitor run started' });
+app.post('/api/monitor/run', authenticate, async (_req, res) => {
+  try {
+    await runAllChecks();
+    res.json({ success: true, message: 'Monitor run completed' });
+  } catch (err) {
+    console.error('Manual run error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// cPanel cron trigger — secured by CRON_SECRET, no JWT needed
+app.post('/api/cron/trigger', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers['x-cron-secret'] !== secret) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+  try {
+    await runAllChecks();
+    res.json({ success: true, message: 'Cron run completed' });
+  } catch (err) {
+    console.error('Cron trigger error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 app.use(errorHandler);
