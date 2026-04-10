@@ -1,4 +1,13 @@
 require('dotenv').config();
+
+// Validate required environment variables before anything else
+const REQUIRED_ENV = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_NAME'];
+const missingEnv = REQUIRED_ENV.filter(k => !process.env[k]);
+if (missingEnv.length) {
+  console.error(`Missing required environment variables: ${missingEnv.join(', ')}`);
+  process.exit(1);
+}
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -22,11 +31,11 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
 
+const FRONTEND_ORIGIN = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 app.use(cors({
-  origin: '*',
+  origin: FRONTEND_ORIGIN,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -3,8 +3,8 @@ const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../
 const emailService = require('./emailService');
 require('dotenv').config();
 
-const GOOD_MS    = parseInt(process.env.LOAD_TIME_GOOD)    || 2000;
-const AVERAGE_MS = parseInt(process.env.LOAD_TIME_AVERAGE) || 4000;
+const GOOD_MS    = parseInt(process.env.LOAD_TIME_GOOD)    || 1000;  // ≤1s Good
+const AVERAGE_MS = parseInt(process.env.LOAD_TIME_AVERAGE) || 3000;  // ≤3s Average, >3s Poor
 
 function classifyLoadTime(ms) {
   if (ms == null) return null;
@@ -13,30 +13,51 @@ function classifyLoadTime(ms) {
   return 'bad';
 }
 
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.5',
+};
+
+const REQUEST_OPTIONS = {
+  // No timeout — slow sites should not be marked DOWN just because they take long.
+  // Only a real network error (DNS fail, connection refused, etc.) marks a site DOWN.
+  maxRedirects: 5,
+  validateStatus: () => true,
+  headers: BROWSER_HEADERS,
+};
+
 async function checkUrl(urlRow) {
   let status         = 'down';
-  let loadTimeMs     = null;
   let httpStatusCode = null;
   let errorMessage   = null;
+  let loadTimeMs     = null;
 
   const start = Date.now();
   try {
-    const response = await axios.get(urlRow.url, {
-      timeout: 30000,
-      maxRedirects: 5,
-      validateStatus: () => true, // don't throw on any status code
-      headers: { 'User-Agent': 'UptimeMonitor/1.0' },
+    // Full GET request so we measure page load time instead of just response headers.
+    const response = await axios.get(urlRow.url, { ...REQUEST_OPTIONS, responseType: 'stream' });
+    await new Promise((resolve, reject) => {
+      response.data.on('data', () => {});
+      response.data.on('end', resolve);
+      response.data.on('error', reject);
     });
+
     loadTimeMs     = Date.now() - start;
     httpStatusCode = response.status;
 
-    if (httpStatusCode < 400) {
+    // 2xx and 3xx = UP, 4xx and 5xx = DOWN
+    if (httpStatusCode >= 200 && httpStatusCode < 400) {
       status = 'up';
     } else {
+      status       = 'down';
       errorMessage = `HTTP ${httpStatusCode}`;
     }
   } catch (err) {
+    // Only real errors (DNS failure, connection refused, etc.) reach here.
+    // Timeouts won't occur because we removed the timeout limit.
     loadTimeMs   = Date.now() - start;
+    status       = 'down';
     errorMessage = err.message.slice(0, 255);
   }
 
@@ -63,7 +84,7 @@ async function handleStatusTransition(urlRow, newStatus) {
   // UP → DOWN: open incident + notify client
   if (prevStatus !== 'down' && newStatus === 'down') {
     const incident = await Incident.create({
-      url_id:     urlRow.id,
+      url_id: urlRow.id,
       started_at: new Date(),
     });
 
@@ -71,9 +92,9 @@ async function handleStatusTransition(urlRow, newStatus) {
       console.log(`[ALERT] Attempting to send downtime alert for ${urlRow.name} to ${urlRow.client_email}`);
       await emailService.sendDowntimeAlert({
         clientEmail: urlRow.client_email,
-        urlName:     urlRow.name,
-        url:         urlRow.url,
-        detectedAt:  new Date(),
+        urlName: urlRow.name,
+        url: urlRow.url,
+        detectedAt: new Date(),
       });
       await incident.update({ notified_client: true });
       console.log(`[ALERT] Downtime alert sent successfully to ${urlRow.client_email}`);
@@ -87,8 +108,8 @@ async function handleStatusTransition(urlRow, newStatus) {
   // DOWN → UP: close incident + notify client recovery
   if (prevStatus === 'down' && newStatus === 'up') {
     const incident = await Incident.findOne({
-      where:  { url_id: urlRow.id, resolved_at: null },
-      order:  [['started_at', 'DESC']],
+      where: { url_id: urlRow.id, resolved_at: null },
+      order: [['started_at', 'DESC']],
     });
 
     if (incident) {
@@ -99,10 +120,10 @@ async function handleStatusTransition(urlRow, newStatus) {
 
       try {
         await emailService.sendRecoveryAlert({
-          clientEmail:     urlRow.client_email,
-          urlName:         urlRow.name,
-          url:             urlRow.url,
-          recoveredAt:     new Date(),
+          clientEmail: urlRow.client_email,
+          urlName: urlRow.name,
+          url: urlRow.url,
+          recoveredAt: new Date(),
           downtimeMinutes: durationMinutes,
         });
       } catch (e) {
@@ -136,9 +157,9 @@ async function runAllChecks() {
 
     const results = await Promise.allSettled(
       urls.map(async (urlRow) => {
-        const result     = await checkUrl(urlRow);
+        const result = await checkUrl(urlRow);
         const transition = await handleStatusTransition(urlRow, result.status);
-        console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — ${result.loadTimeMs}ms — ${transition}`);
+        console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — HTTP ${result.httpStatusCode ?? 'ERR'} — ${result.loadTimeMs}ms — ${transition}`);
         return { urlRow, result };
       })
     );
@@ -154,7 +175,7 @@ async function runAllChecks() {
     if (failures.length) {
       try {
         const recipients = await InternalRecipient.findAll({ attributes: ['email'] });
-        const emails     = recipients.map(r => r.email);
+        const emails = recipients.map(r => r.email);
         if (emails.length) {
           await emailService.sendInternalFailureSummary({ recipients: emails, failures });
           console.log(`  Internal summary sent to ${emails.length} recipient(s).`);

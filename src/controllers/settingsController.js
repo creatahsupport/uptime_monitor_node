@@ -27,9 +27,12 @@ exports.updateCronSetting = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Schedule is required' });
     }
 
-    // Apply new schedule immediately
-    await rescheduleCronJob(schedule);
+    const cron = require('node-cron');
+    if (!cron.validate(schedule)) {
+      return res.status(400).json({ success: false, message: `Invalid cron expression: "${schedule}"` });
+    }
 
+    await rescheduleCronJob(schedule);
     res.json({ success: true, message: 'Cron schedule updated successfully', data: schedule });
   } catch (error) {
     console.error('Error updating cron setting:', error);

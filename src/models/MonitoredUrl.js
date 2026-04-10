@@ -51,6 +51,10 @@ const MonitoredUrl = sequelize.define('MonitoredUrl', {
   timestamps: true,
   createdAt:  'created_at',
   updatedAt:  'updated_at',
+  indexes: [
+    { fields: ['client_email'] },
+    { fields: ['is_deleted', 'is_active'] },
+  ],
 });
 
 module.exports = MonitoredUrl;

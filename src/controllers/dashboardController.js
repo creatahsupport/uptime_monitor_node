@@ -8,8 +8,10 @@ async function getMonthlyStats(req, res) {
   const urlFilter      = url_id ? 'AND mc.url_id = :urlId' : '';
   const replacements   = { ...(month ? { month } : {}), ...(url_id ? { urlId: parseInt(url_id) } : {}) };
 
-  // Always return total active URL count (unfiltered)
-  const total_urls = await MonitoredUrl.count({ where: { is_active: true, is_deleted: false } });
+  // When a specific URL is selected, show 1; otherwise count all active non-deleted URLs
+  const total_urls = url_id
+    ? await MonitoredUrl.count({ where: { id: parseInt(url_id), is_active: true, is_deleted: false } })
+    : await MonitoredUrl.count({ where: { is_active: true, is_deleted: false } });
 
   try {
     const monthFilter = month ? "AND DATE_FORMAT(mc.checked_at, '%Y-%m') = :month" : '';

@@ -1,5 +1,14 @@
 const { InternalRecipient } = require('../models');
 
+function validateRecipientEmail(raw) {
+  const email = (raw || '').trim();
+  if (!email) return 'email is required';
+  if (/%[0-9A-Fa-f]{2}/.test(email)) return 'Must be a valid email address';
+  if (/[<>()"';]/.test(email)) return 'Must be a valid email address';
+  if (!/^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/i.test(email)) return 'Must be a valid email address';
+  return null;
+}
+
 // GET /api/recipients
 async function getAll(_req, res) {
   try {
@@ -13,7 +22,8 @@ async function getAll(_req, res) {
 // POST /api/recipients
 async function create(req, res) {
   const { name, email } = req.body;
-  if (!email) return res.status(400).json({ success: false, message: 'email is required' });
+  const validationError = validateRecipientEmail(email);
+  if (validationError) return res.status(400).json({ success: false, message: validationError });
   try {
     const recipient = await InternalRecipient.create({ name: name || null, email: email.trim() });
     res.status(201).json({ success: true, data: recipient });

@@ -3,6 +3,10 @@ const bcrypt = require('bcryptjs');
 const { User } = require('../models');
 require('dotenv').config();
 
+// Single active session store: userId → token
+// Only one session allowed at a time per user
+const activeSessions = new Map();
+
 async function login(req, res) {
   try {
     const { username: rawUsername, password } = req.body;
@@ -12,7 +16,6 @@ async function login(req, res) {
 
     const username = rawUsername.trim();
 
-    // Case-sensitive lookup: find by username then verify exact match in JS
     const user = await User.findOne({ where: { username } });
     if (!user || user.username !== username) {
       return res.status(401).json({ success: false, message: 'No account found with this username' });
@@ -25,9 +28,12 @@ async function login(req, res) {
 
     const token = jwt.sign(
       { id: user.id, username: user.username },
-      process.env.JWT_SECRET || 'uptime-monitor-secret',
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    // Overwrite any existing session — old token becomes invalid
+    activeSessions.set(user.id, token);
 
     res.json({ success: true, token, username: user.username });
   } catch (error) {
@@ -36,4 +42,9 @@ async function login(req, res) {
   }
 }
 
-module.exports = { login };
+function logout(req, res) {
+  if (req.user?.id) activeSessions.delete(req.user.id);
+  res.json({ success: true, message: 'Logged out' });
+}
+
+module.exports = { login, logout, activeSessions };
