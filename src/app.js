@@ -34,8 +34,9 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
 
 const FRONTEND_ORIGIN = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+const ALLOWED_ORIGINS = [FRONTEND_ORIGIN, 'http://localhost:5173', 'http://localhost:3000'];
 app.use(cors({
-  origin: FRONTEND_ORIGIN,
+  origin: (origin, cb) => cb(null, !origin || ALLOWED_ORIGINS.includes(origin)),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
