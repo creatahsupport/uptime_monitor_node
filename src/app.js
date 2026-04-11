@@ -27,6 +27,8 @@ const dashboardRoutes = require('./routes/dashboard');
 const reportRoutes = require('./routes/reports');
 const settingsRoutes = require('./routes/settings');
 
+const path = require('path');
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
@@ -39,6 +41,10 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve React frontend build
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+app.use(express.static(PUBLIC_DIR));
 
 // Public routes
 app.use('/api/auth', authRoutes);
@@ -77,6 +83,13 @@ app.post('/api/cron/trigger', async (req, res) => {
 });
 
 app.use(errorHandler);
+
+// SPA fallback — serve index.html for any non-API route (React Router)
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  }
+});
 
 async function start() {
   await testConnection();
