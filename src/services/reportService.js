@@ -62,6 +62,15 @@ async function buildReportData(month, urlId) {
   };
 }
 
+function formatCsvDate(dateStr) {
+  if (!dateStr) return '';
+  const TZ = process.env.TZ || 'Asia/Kolkata';
+  const d = new Date(dateStr);
+  const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: TZ });
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: TZ }).toLowerCase();
+  return `${date} ${time}`;
+}
+
 async function generateCsv({ period, summary, checks }) {
   const summaryFields = [
     { label: 'URL Name',      value: 'name' },
@@ -85,7 +94,8 @@ async function generateCsv({ period, summary, checks }) {
   ];
 
   const summaryCSV = new Parser({ fields: summaryFields }).parse(summary);
-  const detailCSV  = new Parser({ fields: detailFields }).parse(checks);
+  const formattedChecks = checks.map(c => ({ ...c, checked_at: formatCsvDate(c.checked_at) }));
+  const detailCSV  = new Parser({ fields: detailFields }).parse(formattedChecks);
 
   return `UPTIME MONITOR REPORT — ${period.month}\n\n=== SUMMARY ===\n${summaryCSV}\n\n=== DETAILED CHECKS ===\n${detailCSV}`;
 }

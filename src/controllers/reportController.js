@@ -2,16 +2,20 @@ const { QueryTypes } = require('sequelize');
 const { sequelize } = require('../models');
 const reportService = require('../services/reportService');
 
-// GET /api/reports/months
-async function getAvailableMonths(_req, res) {
+// GET /api/reports/months?url_id=1
+async function getAvailableMonths(req, res) {
   try {
+    const { url_id } = req.query;
+    const urlFilter = url_id ? 'WHERE url_id = :urlId' : '';
+    const replacements = url_id ? { urlId: parseInt(url_id) } : {};
     const rows = await sequelize.query(
       `SELECT DISTINCT
          DATE_FORMAT(checked_at, '%Y-%m') AS month_key,
          DATE_FORMAT(checked_at, '%M %Y') AS month_label
        FROM monitor_checks
+       ${urlFilter}
        ORDER BY month_key DESC`,
-      { type: QueryTypes.SELECT }
+      { replacements, type: QueryTypes.SELECT }
     );
     res.json({ success: true, data: rows });
   } catch (err) {
