@@ -25,8 +25,8 @@ function fmtDate(d) {
   });
 }
 
-// ── Shared wrapper ────────────────────────────────────────────────────────────
-function emailWrapper(header, body) {
+// ── Shared outer wrapper ──────────────────────────────────────────────────────
+function emailWrapper(header, banner, body) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -38,9 +38,8 @@ function emailWrapper(header, body) {
   <tr><td align="center">
     <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
       <tr><td>${header}</td></tr>
-      <tr><td style="background:#ffffff;border:1px solid #e8e8e8;border-top:none;border-radius:0 0 8px 8px;">
-        ${body}
-      </td></tr>
+      <tr><td>${banner}</td></tr>
+      <tr><td style="background:#ffffff;border:1px solid #e8e8e8;border-top:none;">${body}</td></tr>
       <tr><td style="background:#f2f2f2;padding:13px 32px;text-align:center;border-top:1px solid #ddd;border-radius:0 0 8px 8px;">
         <p style="margin:0;font-size:12px;color:#999;font-family:Arial,sans-serif;">Website Availability Monitor &bull; Creatah Software Technologies</p>
       </td></tr>
@@ -52,12 +51,14 @@ function emailWrapper(header, body) {
 }
 
 // ── Client: site is DOWN ──────────────────────────────────────────────────────
-async function sendDowntimeAlert({ clientEmail, urlName, url, detectedAt, httpStatus, errorMessage }) {
+async function sendDowntimeAlert({ clientEmail, url, detectedAt, httpStatus, errorMessage }) {
   const header = `
     <div style="background:#a32d2d;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
       <p style="color:#fcebeb;font-size:18px;font-weight:bold;font-family:Arial,sans-serif;margin:0;">&#9888; Website Down Alert</p>
       <p style="color:#f09595;font-size:12px;margin:6px 0 0;font-family:Arial,sans-serif;">Creatah Software Technologies &bull; Automated Monitor</p>
-    </div>
+    </div>`;
+
+  const banner = `
     <div style="background:#fcebeb;padding:11px 32px;border-left:4px solid #a32d2d;">
       <span style="color:#791f1f;font-size:13px;font-weight:bold;font-family:Arial,sans-serif;">Your website is currently DOWN or unreachable.</span>
     </div>`;
@@ -74,20 +75,16 @@ async function sendDowntimeAlert({ clientEmail, urlName, url, detectedAt, httpSt
       <p style="color:#333;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.6px;margin:0 0 8px;font-family:Arial,sans-serif;">Incident Details</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:22px;font-size:12px;font-family:Arial,sans-serif;">
         <tr>
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;width:35%;background:#f2f2f2;">Website</td>
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${urlName}</td>
-        </tr>
-        <tr style="background:#f9f9f9;">
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">URL</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;width:35%;background:#f2f2f2;">URL</td>
           <td style="padding:9px 12px;border:1px solid #ddd;color:#333;"><a href="${url}" style="color:#185fa5;">${url}</a></td>
         </tr>
-        <tr>
+        <tr style="background:#f9f9f9;">
           <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Status</td>
           <td style="padding:9px 12px;border:1px solid #ddd;">
             <span style="background:#a32d2d;color:#fff;padding:2px 9px;border-radius:12px;font-size:11px;">${httpStatus || 'ERR'}</span>
           </td>
         </tr>
-        <tr style="background:#f9f9f9;">
+        <tr>
           <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Detected At</td>
           <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${fmtDate(detectedAt)}</td>
         </tr>
@@ -110,21 +107,19 @@ async function sendDowntimeAlert({ clientEmail, urlName, url, detectedAt, httpSt
     from: FROM,
     to: clientEmail,
     subject: `[ALERT] Your website is currently DOWN | ${fmtDate(detectedAt)}`,
-    html: emailWrapper(header, body),
+    html: emailWrapper(header, banner, body),
   });
 }
 
 // ── Client: site has RECOVERED ────────────────────────────────────────────────
-async function sendRecoveryAlert({ clientEmail, urlName, url, recoveredAt, downtimeMinutes }) {
-  const dur = downtimeMinutes
-    ? `${Math.floor(downtimeMinutes / 60)}h ${downtimeMinutes % 60}m`
-    : null;
-
+async function sendRecoveryAlert({ clientEmail, url, recoveredAt }) {
   const header = `
     <div style="background:#1d6e4e;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
       <p style="color:#eafaf4;font-size:18px;font-weight:bold;font-family:Arial,sans-serif;margin:0;">&#10003; Website Resolved</p>
       <p style="color:#a3d9c2;font-size:12px;margin:6px 0 0;font-family:Arial,sans-serif;">Creatah Software Technologies &bull; Automated Monitor</p>
-    </div>
+    </div>`;
+
+  const banner = `
     <div style="background:#eafaf4;padding:11px 32px;border-left:4px solid #1d6e4e;">
       <span style="color:#0f5132;font-size:13px;font-weight:bold;font-family:Arial,sans-serif;">Good news! Your website is back UP and responding normally.</span>
     </div>`;
@@ -141,27 +136,19 @@ async function sendRecoveryAlert({ clientEmail, urlName, url, recoveredAt, downt
       <p style="color:#333;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.6px;margin:0 0 8px;font-family:Arial,sans-serif;">Resolution Details</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:22px;font-size:12px;font-family:Arial,sans-serif;">
         <tr>
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;width:35%;background:#f2f2f2;">Website</td>
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${urlName}</td>
-        </tr>
-        <tr style="background:#f9f9f9;">
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">URL</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;width:35%;background:#f2f2f2;">URL</td>
           <td style="padding:9px 12px;border:1px solid #ddd;color:#333;"><a href="${url}" style="color:#185fa5;">${url}</a></td>
         </tr>
-        <tr>
+        <tr style="background:#f9f9f9;">
           <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Status</td>
           <td style="padding:9px 12px;border:1px solid #ddd;">
             <span style="background:#1d6e4e;color:#fff;padding:2px 9px;border-radius:12px;font-size:11px;">UP</span>
           </td>
         </tr>
-        <tr style="background:#f9f9f9;">
+        <tr>
           <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Resolved At</td>
           <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${fmtDate(recoveredAt)}</td>
         </tr>
-        ${dur ? `<tr style="background:#f9f9f9;">
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Total Downtime</td>
-          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${dur}</td>
-        </tr>` : ''}
       </table>
 
       <div style="background:#f0fdf8;border-radius:6px;border:1px solid #b7e4d0;padding:14px 18px;margin-bottom:10px;">
@@ -176,7 +163,7 @@ async function sendRecoveryAlert({ clientEmail, urlName, url, recoveredAt, downt
     from: FROM,
     to: clientEmail,
     subject: `[RESOLVED] Your website is back UP | ${fmtDate(recoveredAt)}`,
-    html: emailWrapper(header, body),
+    html: emailWrapper(header, banner, body),
   });
 }
 
@@ -184,22 +171,24 @@ async function sendRecoveryAlert({ clientEmail, urlName, url, recoveredAt, downt
 async function sendInternalFailureSummary({ recipients, failures }) {
   if (!recipients.length || !failures.length) return;
 
+  const now = fmtDate(new Date());
+
   const rows = failures.map((f, i) => `
-    <tr${i % 2 === 1 ? ' style="background:#f9f9f9;"' : ''}>
-      <td style="padding:9px 12px;border:1px solid #ddd;color:#777;">${i + 1}</td>
-      <td style="padding:9px 12px;border:1px solid #ddd;"><a href="${f.url}" style="color:#185fa5;">${f.url}</a></td>
-      <td style="padding:9px 12px;border:1px solid #ddd;">
-        <span style="background:#a32d2d;color:#fff;padding:2px 9px;border-radius:12px;font-size:11px;">${f.status || 'ERR'}</span>
+    <tr>
+      <td style="padding:9px 12px;border:1px solid #ddd;color:#777;${i % 2 === 1 ? 'background:#f9f9f9;' : ''}">${i + 1}</td>
+      <td style="padding:9px 12px;border:1px solid #ddd;${i % 2 === 1 ? 'background:#f9f9f9;' : ''}"><a href="${f.url}" style="color:#185fa5;">${f.url}</a></td>
+      <td style="padding:9px 12px;border:1px solid #ddd;${i % 2 === 1 ? 'background:#f9f9f9;' : ''}">
+        <span style="background:#a32d2d;color:#fff;padding:2px 9px;border-radius:12px;font-size:11px;">${f.status || f.detected_at && 'ERR' || 'ERR'}</span>
       </td>
     </tr>`).join('');
-
-  const now = fmtDate(new Date());
 
   const header = `
     <div style="background:#a32d2d;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
       <p style="color:#fcebeb;font-size:18px;font-weight:bold;font-family:Arial,sans-serif;margin:0;">&#9888; Website Availability Alert</p>
       <p style="color:#f09595;font-size:12px;margin:6px 0 0;font-family:Arial,sans-serif;">Automated Monitoring System &bull; Creatah Software Technologies</p>
-    </div>
+    </div>`;
+
+  const banner = `
     <div style="background:#fcebeb;padding:11px 32px;border-left:4px solid #a32d2d;">
       <span style="color:#791f1f;font-size:13px;font-weight:bold;font-family:Arial,sans-serif;">${failures.length} website(s) are currently DOWN or unreachable.</span>
     </div>`;
@@ -253,7 +242,7 @@ async function sendInternalFailureSummary({ recipients, failures }) {
     from: FROM,
     to: recipients.join(', '),
     subject: `[ALERT] Website Availability Alert! — ${failures.length} site(s) DOWN | ${now}`,
-    html: emailWrapper(header, body),
+    html: emailWrapper(header, banner, body),
   });
 }
 
@@ -263,6 +252,11 @@ async function sendMonthlyReport({ clientEmail, urlName, month, pdfBuffer }) {
     <div style="background:#1a56db;padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
       <p style="color:#e8f0fe;font-size:18px;font-weight:bold;font-family:Arial,sans-serif;margin:0;">&#128202; Monthly Availability Report</p>
       <p style="color:#a8c4f8;font-size:12px;margin:6px 0 0;font-family:Arial,sans-serif;">Creatah Software Technologies &bull; Automated Reporting</p>
+    </div>`;
+
+  const banner = `
+    <div style="background:#e8f0fe;padding:11px 32px;border-left:4px solid #1a56db;">
+      <span style="color:#1a3a8f;font-size:13px;font-weight:bold;font-family:Arial,sans-serif;">Your monthly availability report is attached.</span>
     </div>`;
 
   const body = `
@@ -278,7 +272,7 @@ async function sendMonthlyReport({ clientEmail, urlName, month, pdfBuffer }) {
     from: FROM,
     to: clientEmail,
     subject: `[REPORT] Monthly Availability Report — ${urlName} (${month})`,
-    html: emailWrapper(header, body),
+    html: emailWrapper(header, banner, body),
     attachments: [{
       filename: `Website-Report-${urlName.replace(/[^a-z0-9]/gi, '_')}-${month}.pdf`,
       content: pdfBuffer,

@@ -19,9 +19,7 @@ const BROWSER_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.5',
 };
 
-const REQUEST_OPTIONS = {
-  // No timeout — slow sites should not be marked DOWN just because they take long.
-  // Only a real network error (DNS fail, connection refused, etc.) marks a site DOWN.
+const BASE_OPTIONS = {
   maxRedirects: 5,
   validateStatus: () => true,
   headers: BROWSER_HEADERS,
@@ -35,30 +33,39 @@ async function checkUrl(urlRow) {
 
   const start = Date.now();
   try {
-    // Full GET request so we measure page load time instead of just response headers.
-    const response = await axios.get(urlRow.url, { ...REQUEST_OPTIONS, responseType: 'stream' });
-    await new Promise((resolve, reject) => {
-      response.data.on('data', () => {});
-      response.data.on('end', resolve);
-      response.data.on('error', reject);
-    });
+    // Step 1 — Quick HEAD request (5s) to check if server is alive
+    // This determines UP/DOWN without waiting for the full page body
+    const headResponse = await axios.head(urlRow.url, { ...BASE_OPTIONS, timeout: 5000 });
+    httpStatusCode = headResponse.status;
 
-    loadTimeMs     = Date.now() - start;
-    httpStatusCode = response.status;
+    // Any HTTP response means the server is reachable — mark UP
+    // Only connection-level errors (timeout, DNS, ECONNRESET) mark DOWN
+    status = 'up';
 
-    // 2xx and 3xx = UP, 4xx and 5xx = DOWN
-    if (httpStatusCode >= 200 && httpStatusCode < 400) {
-      status = 'up';
-    } else {
-      status       = 'down';
-      errorMessage = `HTTP ${httpStatusCode}`;
+    // Step 2 — Full GET to measure actual load time (up to 120s)
+    try {
+      const getStart = Date.now();
+      const getResponse = await axios.get(urlRow.url, { ...BASE_OPTIONS, timeout: 120000, responseType: 'stream' });
+      httpStatusCode = getResponse.status;
+      await new Promise((resolve, reject) => {
+        getResponse.data.on('data', () => {});
+        getResponse.data.on('end', resolve);
+        getResponse.data.on('error', reject);
+      });
+      loadTimeMs = Date.now() - getStart;
+    } catch {
+      // GET failed but HEAD succeeded — site is UP, use HEAD time
+      loadTimeMs = Date.now() - start;
     }
   } catch (err) {
-    // Only real errors (DNS failure, connection refused, etc.) reach here.
-    // Timeouts won't occur because we removed the timeout limit.
+    // HEAD request failed — server truly unreachable
     loadTimeMs   = Date.now() - start;
     status       = 'down';
-    errorMessage = err.message.slice(0, 255);
+    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
+      errorMessage = 'Connection timed out — server not responding';
+    } else {
+      errorMessage = err.message.slice(0, 255);
+    }
   }
 
   const performanceLabel = status === 'up' ? classifyLoadTime(loadTimeMs) : null;
@@ -76,25 +83,42 @@ async function checkUrl(urlRow) {
   return { status, loadTimeMs, performanceLabel, httpStatusCode, errorMessage };
 }
 
-async function handleStatusTransition(urlRow, newStatus) {
+const CONFIRM_FAILURES = 2; // number of consecutive failures before marking DOWN
+
+async function handleStatusTransition(urlRow, newStatus, result) {
   const prevStatus = urlRow.current_status;
 
-  await urlRow.update({ current_status: newStatus, last_checked_at: new Date() });
+  if (newStatus === 'down') {
+    const failures = (urlRow.consecutive_failures || 0) + 1;
+    // Always update status immediately so URL Management shows correct status
+    await urlRow.update({ consecutive_failures: failures, current_status: 'down', last_checked_at: new Date() });
 
-  // UP → DOWN: open incident + notify client
-  if (prevStatus !== 'down' && newStatus === 'down') {
+    // Not enough consecutive failures yet — don't alert
+    if (failures < CONFIRM_FAILURES) {
+      console.log(`  [WARN] ${urlRow.name} failed (${failures}/${CONFIRM_FAILURES}) — waiting for confirmation`);
+      return 'failure_pending';
+    }
+
+    // Confirmed DOWN (already was down — don't re-alert)
+    if (prevStatus === 'down') {
+      return 'still_down';
+    }
+
+    // Transition to DOWN confirmed — alert only
+
     const incident = await Incident.create({
       url_id: urlRow.id,
       started_at: new Date(),
     });
 
     try {
-      console.log(`[ALERT] Attempting to send downtime alert for ${urlRow.name} to ${urlRow.client_email}`);
+      console.log(`[ALERT] Sending downtime alert for ${urlRow.name} to ${urlRow.client_email}`);
       await emailService.sendDowntimeAlert({
-        clientEmail: urlRow.client_email,
-        urlName: urlRow.name,
-        url: urlRow.url,
-        detectedAt: new Date(),
+        clientEmail:  urlRow.client_email,
+        url:          urlRow.url,
+        detectedAt:   new Date(),
+        httpStatus:   result.httpStatusCode,
+        errorMessage: result.errorMessage,
       });
       await incident.update({ notified_client: true });
       console.log(`[ALERT] Downtime alert sent successfully to ${urlRow.client_email}`);
@@ -105,8 +129,11 @@ async function handleStatusTransition(urlRow, newStatus) {
     return 'down_started';
   }
 
+  // Site is UP — reset consecutive failures counter
+  await urlRow.update({ consecutive_failures: 0, current_status: 'up', last_checked_at: new Date() });
+
   // DOWN → UP: close incident + notify client recovery
-  if (prevStatus === 'down' && newStatus === 'up') {
+  if (prevStatus === 'down') {
     const incident = await Incident.findOne({
       where: { url_id: urlRow.id, resolved_at: null },
       order: [['started_at', 'DESC']],
@@ -121,10 +148,8 @@ async function handleStatusTransition(urlRow, newStatus) {
       try {
         await emailService.sendRecoveryAlert({
           clientEmail: urlRow.client_email,
-          urlName: urlRow.name,
-          url: urlRow.url,
+          url:         urlRow.url,
           recoveredAt: new Date(),
-          downtimeMinutes: durationMinutes,
         });
       } catch (e) {
         console.error('Failed to send recovery alert:', e.message);
@@ -158,7 +183,7 @@ async function runAllChecks() {
     const results = await Promise.allSettled(
       urls.map(async (urlRow) => {
         const result = await checkUrl(urlRow);
-        const transition = await handleStatusTransition(urlRow, result.status);
+        const transition = await handleStatusTransition(urlRow, result.status, result);
         console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — HTTP ${result.httpStatusCode ?? 'ERR'} — ${result.loadTimeMs}ms — ${transition}`);
         return { urlRow, result };
       })

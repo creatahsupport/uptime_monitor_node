@@ -46,6 +46,9 @@ const MonitoredUrl = sequelize.define('MonitoredUrl', {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
   },
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
 }, {
   tableName:  'monitored_urls',
   timestamps: true,
