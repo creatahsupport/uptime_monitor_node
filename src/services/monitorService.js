@@ -1,3 +1,4 @@
+const net   = require('net');
 const axios = require('axios');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
@@ -13,10 +14,20 @@ function classifyLoadTime(ms) {
   return 'bad';
 }
 
+
 const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'DNT': '1',
+  'Connection': 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Cache-Control': 'max-age=0',
 };
 
 const BASE_OPTIONS = {
@@ -31,40 +42,50 @@ async function checkUrl(urlRow) {
   let errorMessage   = null;
   let loadTimeMs     = null;
 
-  const start = Date.now();
   try {
-    // Step 1 — Quick HEAD request (5s) to check if server is alive
-    // This determines UP/DOWN without waiting for the full page body
-    const headResponse = await axios.head(urlRow.url, { ...BASE_OPTIONS, timeout: 5000 });
-    httpStatusCode = headResponse.status;
+    const startTime = Date.now();
+    // Step 1 — GET (10s): any HTTP response = server is reachable
+    const response = await axios.get(urlRow.url, { ...BASE_OPTIONS, timeout: 10000, responseType: 'stream' });
+    loadTimeMs = Date.now() - startTime;
+    httpStatusCode = response.status;
+    response.data.destroy(); // abort body — we only need the status code
 
-    // Any HTTP response means the server is reachable — mark UP
-    // Only connection-level errors (timeout, DNS, ECONNRESET) mark DOWN
-    status = 'up';
-
-    // Step 2 — Full GET to measure actual load time (up to 120s)
-    try {
-      const getStart = Date.now();
-      const getResponse = await axios.get(urlRow.url, { ...BASE_OPTIONS, timeout: 120000, responseType: 'stream' });
-      httpStatusCode = getResponse.status;
-      await new Promise((resolve, reject) => {
-        getResponse.data.on('data', () => {});
-        getResponse.data.on('end', resolve);
-        getResponse.data.on('error', reject);
-      });
-      loadTimeMs = Date.now() - getStart;
-    } catch {
-      // GET failed but HEAD succeeded — site is UP, use HEAD time
-      loadTimeMs = Date.now() - start;
+    if (httpStatusCode >= 200 && httpStatusCode < 400) {
+      status = 'up';
+    } else {
+      status       = 'down';
+      errorMessage = `HTTP ${httpStatusCode}`;
+      
+      // If we get a 403 or 404, the server is CLEARLY reachable.
+      // We'll mark it as down (as the page is missing), but let's record it.
     }
   } catch (err) {
-    // HEAD request failed — server truly unreachable
-    loadTimeMs   = Date.now() - start;
-    status       = 'down';
-    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
-      errorMessage = 'Connection timed out — server not responding';
-    } else {
-      errorMessage = err.message.slice(0, 255);
+    // Step 2 — GET failed (timeout/blocked): try TCP fallback
+    // Some servers block HTTP bots but the port is still open
+    try {
+      const parsed   = new URL(urlRow.url);
+      const hostname = parsed.hostname;
+      const port     = parsed.port ? parseInt(parsed.port) : (parsed.protocol === 'https:' ? 443 : 80);
+
+      const tcpUp = await new Promise((resolve) => {
+        const socket = new net.Socket();
+        socket.setTimeout(5000);
+        socket
+          .on('connect', () => { socket.destroy(); resolve(true); })
+          .on('timeout', () => { socket.destroy(); resolve(false); })
+          .on('error',   () => { socket.destroy(); resolve(false); })
+          .connect(port, hostname);
+      });
+
+      if (tcpUp) {
+        status = 'up'; // port open — server running, HTTP was blocked
+      } else {
+        status       = 'down';
+        errorMessage = 'Connection timed out — server not responding';
+      }
+    } catch (tcpErr) {
+      status       = 'down';
+      errorMessage = tcpErr.message.slice(0, 255);
     }
   }
 
@@ -90,7 +111,7 @@ async function handleStatusTransition(urlRow, newStatus, result) {
 
   if (newStatus === 'down') {
     const failures = (urlRow.consecutive_failures || 0) + 1;
-    // Always update status immediately so URL Management shows correct status
+    // ALWAYS update status immediately so dashboard shows 'down' on the very first fail
     await urlRow.update({ consecutive_failures: failures, current_status: 'down', last_checked_at: new Date() });
 
     // Not enough consecutive failures yet — don't alert
@@ -99,12 +120,11 @@ async function handleStatusTransition(urlRow, newStatus, result) {
       return 'failure_pending';
     }
 
-    // Confirmed DOWN (already was down — don't re-alert)
+    // Only alert if we were previously UP (avoids re-alerting on every check while down)
+    // We check prevStatus which was captured at the top before the update above
     if (prevStatus === 'down') {
       return 'still_down';
     }
-
-    // Transition to DOWN confirmed — alert only
 
     const incident = await Incident.create({
       url_id: urlRow.id,
@@ -216,4 +236,4 @@ async function runAllChecks() {
   }
 }
 
-module.exports = { runAllChecks, checkUrl };
+module.exports = { runAllChecks, checkUrl, handleStatusTransition };

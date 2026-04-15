@@ -26,6 +26,7 @@ const recipientRoutes = require('./routes/recipients');
 const dashboardRoutes = require('./routes/dashboard');
 const reportRoutes = require('./routes/reports');
 const settingsRoutes = require('./routes/settings');
+const adminRoutes   = require('./routes/admin');
 
 const path = require('path');
 
@@ -57,6 +58,7 @@ app.use('/api/recipients', authenticate, recipientRoutes);
 app.use('/api/dashboard', authenticate, dashboardRoutes);
 app.use('/api/reports', authenticate, reportRoutes);
 app.use('/api/settings', authenticate, settingsRoutes);
+app.use('/api/admin/users', authenticate, adminRoutes);
 
 app.post('/api/monitor/run', authenticate, async (_req, res) => {
   try {

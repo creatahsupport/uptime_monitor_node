@@ -46,6 +46,7 @@ const MonitoredUrl = sequelize.define('MonitoredUrl', {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
   },
+  consecutive_failures: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
   },

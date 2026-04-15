@@ -14,7 +14,20 @@ const User = sequelize.define('User', {
   password: {
     type: DataTypes.STRING,
     allowNull: false
-  }
+  },
+  totp_secret: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  totp_enabled: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
+  role: {
+    type: DataTypes.ENUM('super_admin', 'admin'),
+    defaultValue: 'admin',
+    allowNull: false,
+  },
 }, {
   tableName: 'users',
   timestamps: true,
