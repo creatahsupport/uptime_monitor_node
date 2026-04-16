@@ -120,9 +120,11 @@ async function handleStatusTransition(urlRow, newStatus, result) {
       return 'failure_pending';
     }
 
-    // Only alert if we were previously UP (avoids re-alerting on every check while down)
-    // We check prevStatus which was captured at the top before the update above
-    if (prevStatus === 'down') {
+    // Only alert if there is no existing open incident (avoids re-alerting on every check while down)
+    const existingIncident = await Incident.findOne({
+      where: { url_id: urlRow.id, resolved_at: null },
+    });
+    if (existingIncident) {
       return 'still_down';
     }
 

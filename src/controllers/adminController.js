@@ -5,7 +5,7 @@ const { User } = require('../models');
 async function listUsers(req, res) {
   try {
     const users = await User.findAll({
-      attributes: ['id', 'username', 'role', 'totp_enabled', 'created_at'],
+      attributes: ['id', 'username', 'role', 'totp_enabled', 'is_deleted', 'created_at'],
       order: [['id', 'ASC']],
     });
     res.json({ success: true, users });
@@ -31,7 +31,7 @@ async function createUser(req, res) {
   }
 
   try {
-    const existing = await User.findOne({ where: { username } });
+    const existing = await User.findOne({ where: { username, is_deleted: false } });
     if (existing) {
       return res.status(409).json({ success: false, message: 'Username already exists' });
     }
@@ -66,7 +66,7 @@ async function deleteUser(req, res) {
       return res.status(403).json({ success: false, message: 'Cannot delete a super admin account' });
     }
 
-    await user.destroy();
+    await user.update({ is_deleted: true });
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
     console.error('Delete user error:', error);

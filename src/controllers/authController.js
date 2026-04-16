@@ -46,8 +46,8 @@ async function login(req, res) {
     }
 
     const username = rawUsername.trim();
-    const user = await User.findOne({ where: { username } });
-    if (!user || user.username !== username) {
+    const user = await User.findOne({ where: { username, is_deleted: false } });
+    if (!user) {
       return res.status(401).json({ success: false, message: 'No account found with this username' });
     }
 

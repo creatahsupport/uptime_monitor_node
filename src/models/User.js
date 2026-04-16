@@ -28,11 +28,16 @@ const User = sequelize.define('User', {
     defaultValue: 'admin',
     allowNull: false,
   },
+  is_deleted: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    allowNull: false,
+  },
 }, {
   tableName: 'users',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  updatedAt: 'updated_at',
 });
 
 module.exports = User;
