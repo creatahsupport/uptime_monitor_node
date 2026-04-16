@@ -26,6 +26,9 @@ async function createUser(req, res) {
   if (username.length < 3) {
     return res.status(400).json({ success: false, message: 'Username must be at least 3 characters' });
   }
+  if (!/^[a-zA-Z]+$/.test(username)) {
+    return res.status(400).json({ success: false, message: 'Username must contain letters only — no numbers or symbols' });
+  }
   if (password.length < 6) {
     return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
   }

@@ -68,21 +68,17 @@ function formatCsvDate(dateStr) {
   const d = new Date(dateStr);
   const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: TZ });
   const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: TZ }).toLowerCase();
-  return `${date} ${time}`;
+  // Include a comma so json2csv wraps the value in quotes — prevents Excel from auto-converting to a date
+  return `${date}, ${time}`;
 }
 
-async function generateCsv({ period, summary, checks }) {
-  const summaryFields = [
-    { label: 'URL Name',      value: 'name' },
-    { label: 'URL',           value: 'url' },
-    { label: 'Total Checks',  value: 'total_checks' },
-    { label: 'Up Count',      value: 'up_count' },
-    { label: 'Down Count',    value: 'down_count' },
-    { label: 'Uptime %',      value: 'uptime_pct' },
-    { label: 'Avg Load (ms)', value: 'avg_load_ms' },
-    { label: 'Incidents',     value: 'incident_count' },
-  ];
-  const detailFields = [
+function capitalize(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+
+async function generateCsv({ checks }) {
+  const fields = [
     { label: 'URL Name',       value: 'url_name' },
     { label: 'URL',            value: 'url' },
     { label: 'Checked At',     value: 'checked_at' },
@@ -93,11 +89,15 @@ async function generateCsv({ period, summary, checks }) {
     { label: 'Error',          value: 'error_message' },
   ];
 
-  const summaryCSV = new Parser({ fields: summaryFields }).parse(summary);
-  const formattedChecks = checks.map(c => ({ ...c, checked_at: formatCsvDate(c.checked_at) }));
-  const detailCSV  = new Parser({ fields: detailFields }).parse(formattedChecks);
+  const rows = checks.map(c => ({
+    ...c,
+    checked_at: formatCsvDate(c.checked_at),
+    status: capitalize(c.status),
+    performance_label: capitalize(c.performance_label),
+    error_message: c.error_message || '-',
+  }));
 
-  return `UPTIME MONITOR REPORT — ${period.month}\n\n=== SUMMARY ===\n${summaryCSV}\n\n=== DETAILED CHECKS ===\n${detailCSV}`;
+  return new Parser({ fields }).parse(rows);
 }
 
 async function generatePdf({ period, summary, checks }) {
