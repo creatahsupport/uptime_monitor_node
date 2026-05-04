@@ -9,6 +9,12 @@ const sequelize = new Sequelize(
     host:    process.env.DB_HOST || 'localhost',
     port:    parseInt(process.env.DB_PORT) || 3306,
     dialect: 'mysql',
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false,
+      }
+    },
     timezone: '+00:00',
     logging: false, // set to console.log to see queries
     pool: {
