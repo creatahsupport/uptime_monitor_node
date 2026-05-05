@@ -27,9 +27,12 @@ exports.updateCronSetting = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Schedule is required' });
     }
 
-    // Apply new schedule immediately
-    await rescheduleCronJob(schedule);
+    const cron = require('node-cron');
+    if (!cron.validate(schedule)) {
+      return res.status(400).json({ success: false, message: `Invalid cron expression: "${schedule}"` });
+    }
 
+    await rescheduleCronJob(schedule);
     res.json({ success: true, message: 'Cron schedule updated successfully', data: schedule });
   } catch (error) {
     console.error('Error updating cron setting:', error);
@@ -37,12 +40,17 @@ exports.updateCronSetting = async (req, res) => {
   }
 };
 
-exports.runMonthlyReportNow = async (_req, res) => {
+exports.runMonthlyReportNow = async (req, res) => {
   try {
-    runMonthlyReportProcess().catch(err =>
+    // Use provided month or fall back to current month for manual runs
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = req.body?.month || currentMonth;
+
+    runMonthlyReportProcess(month).catch(err =>
       console.error('[MonthlyReport] Manual run error:', err.message)
     );
-    res.json({ success: true, message: 'Monthly report process started' });
+    res.json({ success: true, message: `Monthly report process started for ${month}` });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error' });
   }

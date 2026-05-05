@@ -37,6 +37,7 @@ const Incident = sequelize.define('Incident', {
   indexes: [
     { fields: ['url_id'] },
     { fields: ['started_at'] },
+    { fields: ['resolved_at'] },
   ],
 });
 

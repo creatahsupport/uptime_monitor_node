@@ -1,4 +1,13 @@
 require('dotenv').config();
+
+// Validate required environment variables before anything else
+const REQUIRED_ENV = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_NAME'];
+const missingEnv = REQUIRED_ENV.filter(k => !process.env[k]);
+if (missingEnv.length) {
+  console.error(`Missing required environment variables: ${missingEnv.join(', ')}`);
+  process.exit(1);
+}
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -17,19 +26,27 @@ const recipientRoutes = require('./routes/recipients');
 const dashboardRoutes = require('./routes/dashboard');
 const reportRoutes = require('./routes/reports');
 const settingsRoutes = require('./routes/settings');
+const adminRoutes   = require('./routes/admin');
+
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
 
+const FRONTEND_ORIGIN = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+const ALLOWED_ORIGINS = [FRONTEND_ORIGIN, 'http://localhost:5173', 'http://localhost:3000'];
 app.use(cors({
-  origin: '*',
+  origin: (origin, cb) => cb(null, !origin || ALLOWED_ORIGINS.includes(origin)),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve React frontend build
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+app.use(express.static(PUBLIC_DIR));
 
 // Public routes
 app.use('/api/auth', authRoutes);
@@ -41,13 +58,41 @@ app.use('/api/recipients', authenticate, recipientRoutes);
 app.use('/api/dashboard', authenticate, dashboardRoutes);
 app.use('/api/reports', authenticate, reportRoutes);
 app.use('/api/settings', authenticate, settingsRoutes);
+app.use('/api/admin/users', authenticate, adminRoutes);
 
-app.post('/api/monitor/run', authenticate, (_req, res) => {
-  runAllChecks().catch(err => console.error('Manual run error:', err.message));
-  res.json({ success: true, message: 'Monitor run started' });
+app.post('/api/monitor/run', authenticate, async (_req, res) => {
+  try {
+    await runAllChecks({ force: true });
+    res.json({ success: true, message: 'Monitor run completed' });
+  } catch (err) {
+    console.error('Manual run error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// cPanel cron trigger — secured by CRON_SECRET, no JWT needed
+app.post('/api/cron/trigger', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers['x-cron-secret'] !== secret) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+  try {
+    await runAllChecks();
+    res.json({ success: true, message: 'Cron run completed' });
+  } catch (err) {
+    console.error('Cron trigger error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 app.use(errorHandler);
+
+// SPA fallback — serve index.html for any non-API route (React Router)
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  }
+});
 
 async function start() {
   await testConnection();

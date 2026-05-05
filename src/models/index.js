@@ -23,13 +23,12 @@ async function syncDb() {
   const bcrypt = require('bcryptjs');
   const userCount = await User.count();
   if (userCount === 0) {
-    const defaultPassword = 'admin'; // Or admin123
-    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-    await User.create({
-      username: 'admin',
-      password: hashedPassword
-    });
-    console.log(`✅ Default admin user 'admin' created.`);
+    const hashedPassword = await bcrypt.hash('admin', 10);
+    await User.create({ username: 'admin', password: hashedPassword, role: 'super_admin' });
+    console.log(`✅ Default super_admin user 'admin' created.`);
+  } else {
+    // Ensure the first user is super_admin (one-time migration)
+    await User.update({ role: 'super_admin' }, { where: { id: 1, role: 'admin' } });
   }
 }
 

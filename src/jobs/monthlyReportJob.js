@@ -18,8 +18,8 @@ function getPreviousMonthString() {
   return `${year}-${month}`;
 }
 
-async function runMonthlyReportProcess() {
-  const month = getPreviousMonthString();
+async function runMonthlyReportProcess(month = null) {
+  if (!month) month = getPreviousMonthString();
   console.log(`[MonthlyReportJob] ── Starting for month: ${month} ──`);
 
   try {
@@ -51,7 +51,12 @@ async function runMonthlyReportProcess() {
       for (const u of urls) {
         try {
           const reportData = await buildReportData(month, u.id);
-          console.log(`[MonthlyReportJob] URL ${u.id} → ${reportData.checks.length} checks found for ${month}`);
+          console.log(`[MonthlyReportJob] URL ${u.id} (${u.name}) → uptime: ${reportData.checks.length}, loadtime: ${reportData.loadChecks.length} for ${month}`);
+
+          if (!reportData.checks.length && !reportData.loadChecks.length) {
+            console.log(`[MonthlyReportJob] ⏭ Skipping URL ${u.id} — no data for ${month}`);
+            continue;
+          }
 
           const pdfBuffer = await generatePdf(reportData);
           await sendMonthlyReport({

@@ -2,16 +2,21 @@ const { QueryTypes } = require('sequelize');
 const { sequelize } = require('../models');
 const reportService = require('../services/reportService');
 
-// GET /api/reports/months
-async function getAvailableMonths(_req, res) {
+// GET /api/reports/months?url_id=1
+async function getAvailableMonths(req, res) {
   try {
+    const { url_id } = req.query;
+    const urlFilter = url_id ? 'AND url_id = :urlId' : '';
+    const replacements = url_id ? { urlId: parseInt(url_id) } : {};
     const rows = await sequelize.query(
       `SELECT DISTINCT
          DATE_FORMAT(checked_at, '%Y-%m') AS month_key,
          DATE_FORMAT(checked_at, '%M %Y') AS month_label
        FROM monitor_checks
+       WHERE check_type = 'uptime'
+       ${urlFilter}
        ORDER BY month_key DESC`,
-      { type: QueryTypes.SELECT }
+      { replacements, type: QueryTypes.SELECT }
     );
     res.json({ success: true, data: rows });
   } catch (err) {
@@ -19,10 +24,27 @@ async function getAvailableMonths(_req, res) {
   }
 }
 
+function validateMonth(month, res) {
+  if (!month) {
+    res.status(400).json({ success: false, message: 'month is required (YYYY-MM)' });
+    return false;
+  }
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    res.status(400).json({ success: false, message: 'month must be in YYYY-MM format' });
+    return false;
+  }
+  const mon = parseInt(month.split('-')[1]);
+  if (mon < 1 || mon > 12) {
+    res.status(400).json({ success: false, message: 'month value must be between 01 and 12' });
+    return false;
+  }
+  return true;
+}
+
 // GET /api/reports/preview?month=2026-03&url_id=1
 async function previewReport(req, res) {
   const { month, url_id } = req.query;
-  if (!month) return res.status(400).json({ success: false, message: 'month is required (YYYY-MM)' });
+  if (!validateMonth(month, res)) return;
   try {
     const data = await reportService.buildReportData(month, url_id || null);
     res.json({ success: true, data });
@@ -34,7 +56,7 @@ async function previewReport(req, res) {
 // GET /api/reports/download?month=2026-03&url_id=1&format=pdf|csv
 async function downloadReport(req, res) {
   const { month, url_id, format = 'csv' } = req.query;
-  if (!month) return res.status(400).json({ success: false, message: 'month is required (YYYY-MM)' });
+  if (!validateMonth(month, res)) return;
   try {
     const data = await reportService.buildReportData(month, url_id || null);
     if (format === 'pdf') {
