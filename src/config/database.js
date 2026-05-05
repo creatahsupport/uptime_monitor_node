@@ -2,19 +2,13 @@ const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
 const sequelize = new Sequelize(
-  'freedb_Lp7i0o4v',      // DB_NAME
-  'u_eY6pOT',             // DB_USER
-  'g2BVHzf7l6Uo',         // DB_PASSWORD
+  process.env.DB_NAME || 'uptime_monitor',
+  process.env.DB_USER || 'root',
+  process.env.DB_PASSWORD || '',
   {
-    host: 'sql.freedb.tech',
-    port: 3306,
+    host:    process.env.DB_HOST || 'localhost',
+    port:    parseInt(process.env.DB_PORT) || 3306,
     dialect: 'mysql',
-    dialectOptions: {
-      ssl: {
-        require: true,
-        rejectUnauthorized: false,
-      }
-    },
     timezone: '+00:00',
     logging: false, // set to console.log to see queries
     pool: {
