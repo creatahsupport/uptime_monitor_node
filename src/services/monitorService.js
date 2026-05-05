@@ -1,5 +1,5 @@
-const net   = require('net');
-const axios = require('axios');
+const axios     = require('axios');
+const { Op }    = require('sequelize');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
 require('dotenv').config();
@@ -36,72 +36,165 @@ const BASE_OPTIONS = {
   headers: BROWSER_HEADERS,
 };
 
-async function checkUrl(urlRow) {
+// ── UptimeRobot API ───────────────────────────────────────────────────────────
+
+async function fetchUptimeRobotMonitors() {
+  const apiKey = process.env.UPTIMEROBOT_API_KEY;
+  if (!apiKey) return null;
+  const res = await axios.post(
+    'https://api.uptimerobot.com/v2/getMonitors',
+    new URLSearchParams({ api_key: apiKey, format: 'json', response_times: '1', response_times_limit: '1' }),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 }
+  );
+  if (res.data?.stat !== 'ok') throw new Error(`UptimeRobot: ${res.data?.error?.message || 'API error'}`);
+  return res.data.monitors || [];
+}
+
+async function ensureUptimeRobotMonitor(urlRow, monitors) {
+  const apiKey = process.env.UPTIMEROBOT_API_KEY;
+  const normalize = (u) => u.replace(/\/$/, '').toLowerCase();
+  const existing = monitors.find(m => normalize(m.url) === normalize(urlRow.url));
+  if (existing) return existing;
+  const res = await axios.post(
+    'https://api.uptimerobot.com/v2/newMonitor',
+    new URLSearchParams({ api_key: apiKey, format: 'json', friendly_name: urlRow.name, url: urlRow.url, type: '1' }),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 }
+  );
+  console.log(`  [UPTIMEROBOT] Monitor created for ${urlRow.name} — status: ${res.data?.stat}`);
+  return null; // newly created, not checked yet
+}
+
+// ── PageSpeed Insights — full page load + resource breakdown ──────────────────
+
+async function getPageSpeedMetrics(pageUrl) {
+  const apiKey   = process.env.PAGESPEED_API_KEY || '';
+  const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(pageUrl)}&strategy=desktop&category=performance${apiKey ? `&key=${apiKey}` : ''}`;
+  const { data } = await axios.get(endpoint, { timeout: 180000, validateStatus: () => true });
+
+  if (data?.error) {
+    throw new Error(`PageSpeed API: ${data.error.message || data.error.status}`);
+  }
+  if (!data?.lighthouseResult?.audits) {
+    throw new Error('PageSpeed API returned no lighthouse data');
+  }
+
+  const audits = data.lighthouseResult.audits;
+  const num = (key) => {
+    const v = audits[key]?.numericValue;
+    return v != null ? Math.round(v) : null;
+  };
+
+  return {
+    full_load_ms:  num('speed-index'),
+    html_load_ms:  num('first-contentful-paint'),
+    css_load_ms:   num('first-meaningful-paint'),
+    js_load_ms:    num('total-blocking-time'),
+    image_load_ms: num('largest-contentful-paint'),
+  };
+}
+
+async function checkUrl(urlRow, uptimeMonitors = null) {
   let status         = 'down';
   let httpStatusCode = null;
   let errorMessage   = null;
+  let errorType      = null;
   let loadTimeMs     = null;
 
-  try {
-    const startTime = Date.now();
-    // Step 1 — GET (10s): any HTTP response = server is reachable
-    const response = await axios.get(urlRow.url, { ...BASE_OPTIONS, timeout: 10000, responseType: 'stream' });
-    loadTimeMs = Date.now() - startTime;
-    httpStatusCode = response.status;
-    response.data.destroy(); // abort body — we only need the status code
-
-    if (httpStatusCode >= 200 && httpStatusCode < 400) {
-      status = 'up';
-    } else {
-      status       = 'down';
-      errorMessage = `HTTP ${httpStatusCode}`;
-      
-      // If we get a 403 or 404, the server is CLEARLY reachable.
-      // We'll mark it as down (as the page is missing), but let's record it.
-    }
-  } catch (err) {
-    // Step 2 — GET failed (timeout/blocked): try TCP fallback
-    // Some servers block HTTP bots but the port is still open
+  if (uptimeMonitors !== null) {
+    // ── UptimeRobot mode ────────────────────────────────────────────────────
     try {
-      const parsed   = new URL(urlRow.url);
-      const hostname = parsed.hostname;
-      const port     = parsed.port ? parseInt(parsed.port) : (parsed.protocol === 'https:' ? 443 : 80);
-
-      const tcpUp = await new Promise((resolve) => {
-        const socket = new net.Socket();
-        socket.setTimeout(5000);
-        socket
-          .on('connect', () => { socket.destroy(); resolve(true); })
-          .on('timeout', () => { socket.destroy(); resolve(false); })
-          .on('error',   () => { socket.destroy(); resolve(false); })
-          .connect(port, hostname);
+      const monitor = await ensureUptimeRobotMonitor(urlRow, uptimeMonitors);
+      if (!monitor) {
+        // Newly created monitor — not checked yet, skip this run
+        console.log(`  [UPTIMEROBOT] ${urlRow.name} — monitor just created, skipping this run`);
+        return { status: 'up', loadTimeMs: null, performanceLabel: null, httpStatusCode: null, errorMessage: null, errorType: null };
+      }
+      // UptimeRobot statuses: 2=up, 8=seems down, 9=down
+      if (monitor.status === 2) {
+        status = 'up';
+        loadTimeMs = monitor.response_times?.[0]?.value || null;
+      } else if (monitor.status === 9) {
+        status = 'down';
+        errorType = 'network_error';
+        errorMessage = 'Site is down';
+      } else if (monitor.status === 8) {
+        status = 'down';
+        errorType = 'network_error';
+        errorMessage = 'Site seems down';
+      } else {
+        // paused or not checked yet
+        status = 'up';
+      }
+    } catch (err) {
+      errorType    = 'network_error';
+      errorMessage = `UptimeRobot error: ${err.message}`;
+      status       = 'down';
+    }
+  } else {
+    // ── Axios mode (fallback if no API key) ─────────────────────────────────
+    const startTime = Date.now();
+    try {
+      const response = await axios.get(urlRow.url, {
+        ...BASE_OPTIONS,
+        timeout: 60000,
+        validateStatus: () => true,
       });
-
-      if (tcpUp) {
-        status = 'up'; // port open — server running, HTTP was blocked
+      loadTimeMs     = Date.now() - startTime;
+      httpStatusCode = response.status;
+      if (httpStatusCode >= 400) {
+        status       = 'down';
+        errorType    = httpStatusCode >= 500 ? 'server_error' : 'client_error';
+        errorMessage = `HTTP ${httpStatusCode} ${response.statusText || ''}`.trim();
+      } else if (httpStatusCode >= 200 && httpStatusCode < 400) {
+        status = 'up';
       } else {
         status       = 'down';
-        errorMessage = 'Connection timed out — server not responding';
+        errorType    = 'http_error';
+        errorMessage = `Unexpected HTTP ${httpStatusCode}`;
       }
-    } catch (tcpErr) {
-      status       = 'down';
-      errorMessage = tcpErr.message.slice(0, 255);
+    } catch (err) {
+      loadTimeMs = Date.now() - startTime;
+      if (err.code === 'ENOTFOUND')                      { errorType = 'dns_error';           errorMessage = 'DNS resolution failed - domain not found'; }
+      else if (err.code === 'ECONNREFUSED')              { errorType = 'connection_refused';   errorMessage = 'Connection refused - server not accepting connections'; }
+      else if (err.code === 'ECONNRESET')                { errorType = 'connection_reset';     errorMessage = 'Connection reset by server'; }
+      else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') { errorType = 'timeout'; errorMessage = 'Site is down'; }
+      else if (err.code === 'CERT_HAS_EXPIRED')          { errorType = 'ssl_expired';          errorMessage = 'SSL certificate has expired'; }
+      else if (err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') { errorType = 'ssl_invalid';   errorMessage = 'SSL certificate is invalid or untrusted'; }
+      else if (err.response) { httpStatusCode = err.response.status; errorType = httpStatusCode >= 500 ? 'server_error' : 'client_error'; errorMessage = `HTTP ${httpStatusCode}: ${err.response.statusText || 'Unknown error'}`; }
+      else                                               { errorType = 'network_error';        errorMessage = 'Site is down'; }
+      status = 'down';
     }
   }
 
   const performanceLabel = status === 'up' ? classifyLoadTime(loadTimeMs) : null;
 
+  // Duplicate guard — skip if this URL was already checked in the last 60 seconds
+  const sixtySecsAgo = new Date(Date.now() - 60 * 1000);
+  const recentCheck = await MonitorCheck.findOne({
+    where: { url_id: urlRow.id, check_type: 'uptime', checked_at: { [Op.gte]: sixtySecsAgo } },
+  });
+  if (recentCheck) {
+    console.log(`  [SKIP] ${urlRow.url} — already checked within last 60s`);
+    return { status, loadTimeMs, performanceLabel, httpStatusCode, errorMessage, errorType };
+  }
+
   await MonitorCheck.create({
     url_id:            urlRow.id,
     status,
+    check_type:        'uptime',
     load_time_ms:      loadTimeMs,
+    full_load_ms:      null,
+    css_load_ms:       null,
+    js_load_ms:        null,
+    image_load_ms:     null,
     performance_label: performanceLabel,
     http_status_code:  httpStatusCode,
     error_message:     errorMessage,
+    error_type:        errorType,
     checked_at:        new Date(),
   });
 
-  return { status, loadTimeMs, performanceLabel, httpStatusCode, errorMessage };
+  return { status, loadTimeMs, performanceLabel, httpStatusCode, errorMessage, errorType };
 }
 
 const CONFIRM_FAILURES = 2; // number of consecutive failures before marking DOWN
@@ -184,14 +277,23 @@ async function handleStatusTransition(urlRow, newStatus, result) {
   return 'unchanged';
 }
 
-let isRunning = false;
+let isRunning  = false;
+let lastRunAt  = 0;
+const MIN_INTERVAL_MS = 5 * 60 * 1000; // minimum 5 minutes between runs
 
-async function runAllChecks() {
+async function runAllChecks({ force = false } = {}) {
   if (isRunning) {
     console.log('⏭  Monitor run skipped — previous run still in progress.');
     return;
   }
+  const now = Date.now();
+  if (!force && now - lastRunAt < MIN_INTERVAL_MS) {
+    const waitSec = Math.round((MIN_INTERVAL_MS - (now - lastRunAt)) / 1000);
+    console.log(`⏭  Monitor run skipped — last run was ${Math.round((now - lastRunAt)/1000)}s ago (next allowed in ${waitSec}s).`);
+    return;
+  }
   isRunning = true;
+  lastRunAt  = now;
   console.log(`[${new Date().toISOString()}] Starting monitor run…`);
 
   try {
@@ -202,9 +304,21 @@ async function runAllChecks() {
       return;
     }
 
+    // Fetch UptimeRobot monitors once for all URLs (null if no API key)
+    let uptimeMonitors = null;
+    if (process.env.UPTIMEROBOT_API_KEY) {
+      try {
+        uptimeMonitors = await fetchUptimeRobotMonitors();
+        console.log(`  [UPTIMEROBOT] Fetched ${uptimeMonitors.length} monitors`);
+      } catch (err) {
+        console.error('  [UPTIMEROBOT] Failed to fetch monitors — skipping run:', err.message);
+        return;
+      }
+    }
+
     const results = await Promise.allSettled(
       urls.map(async (urlRow) => {
-        const result = await checkUrl(urlRow);
+        const result = await checkUrl(urlRow, uptimeMonitors);
         const transition = await handleStatusTransition(urlRow, result.status, result);
         console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — HTTP ${result.httpStatusCode ?? 'ERR'} — ${result.loadTimeMs}ms — ${transition}`);
         return { urlRow, result };
@@ -238,4 +352,70 @@ async function runAllChecks() {
   }
 }
 
-module.exports = { runAllChecks, checkUrl, handleStatusTransition };
+async function runDailyLoadTimeChecks() {
+  console.log(`[${new Date().toISOString()}] Starting daily load time checks…`);
+  try {
+    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
+
+    if (!urls.length) {
+      console.log('No active URLs for load time check.');
+      return;
+    }
+
+    // Run sequentially with a 3s gap to avoid PageSpeed API rate limits
+    const results = [];
+    for (const urlRow of urls) {
+      // Skip if already checked today (first run only)
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const alreadyChecked = await MonitorCheck.findOne({
+        where: { url_id: urlRow.id, check_type: 'load_time', checked_at: { [Op.gte]: todayStart } },
+      });
+      if (alreadyChecked) {
+        console.log(`  [LOAD] ${urlRow.name} — already checked today, skipping`);
+        continue;
+      }
+
+      try {
+        const metrics = await getPageSpeedMetrics(urlRow.url);
+        const performanceLabel = metrics.full_load_ms ? classifyLoadTime(metrics.full_load_ms) : null;
+
+        await MonitorCheck.create({
+          url_id:            urlRow.id,
+          status:            'up',
+          check_type:        'load_time',
+          load_time_ms:      metrics.full_load_ms,
+          full_load_ms:      metrics.full_load_ms,
+          html_load_ms:      metrics.html_load_ms,
+          css_load_ms:       metrics.css_load_ms,
+          js_load_ms:        metrics.js_load_ms,
+          image_load_ms:     metrics.image_load_ms,
+          performance_label: performanceLabel,
+          http_status_code:  null,
+          error_message:     null,
+          error_type:        null,
+          checked_at:        new Date(),
+        });
+
+        console.log(`  [LOAD] ${urlRow.name} — full=${metrics.full_load_ms}ms html=${metrics.html_load_ms}ms css=${metrics.css_load_ms}ms js=${metrics.js_load_ms}ms img=${metrics.image_load_ms}ms`);
+        results.push({ urlRow, metrics });
+      } catch (err) {
+        console.error(`  [LOAD ERROR] ${urlRow.name}:`, err.message);
+        await MonitorCheck.create({
+          url_id:        urlRow.id,
+          status:        'down',
+          check_type:    'load_time',
+          error_message: err.message,
+          checked_at:    new Date(),
+        });
+      }
+      // 3-second gap between requests to avoid rate limiting
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    console.log(`[${new Date().toISOString()}] Daily load time checks complete — ${urls.length} URLs checked.`);
+  } catch (err) {
+    console.error('Daily load time check failed:', err.message);
+  }
+}
+
+module.exports = { runAllChecks, runDailyLoadTimeChecks, checkUrl, handleStatusTransition };

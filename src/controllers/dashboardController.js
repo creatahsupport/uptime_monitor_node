@@ -24,14 +24,20 @@ async function getMonthlyStats(req, res) {
            SUM(CASE WHEN mc.status = 'up' THEN 1 ELSE 0 END) * 100.0 /
            NULLIF(COUNT(*), 0), 1
          )                                                            AS uptime_pct,
-         ROUND(AVG(mc.load_time_ms), 0)                              AS avg_response_ms
+         ROUND(AVG(mc.load_time_ms), 0)                              AS avg_response_ms,
+         ROUND(AVG(mc.html_load_ms), 0)                              AS avg_html_ms,
+         ROUND(AVG(mc.css_load_ms), 0)                               AS avg_css_ms,
+         ROUND(AVG(mc.js_load_ms), 0)                                AS avg_js_ms,
+         ROUND(AVG(mc.image_load_ms), 0)                             AS avg_image_ms,
+         ROUND(AVG(mc.full_load_ms), 0)                              AS avg_full_load_ms,
+         ROUND(AVG(mc.lcp_ms), 0)                                    AS avg_lcp_ms
        FROM monitor_checks mc
        JOIN monitored_urls u ON u.id = mc.url_id AND u.is_deleted = 0
-       WHERE 1=1 ${monthFilter} ${urlFilter}`,
+       WHERE mc.check_type = 'uptime' ${monthFilter} ${urlFilter}`,
       { replacements, type: QueryTypes.SELECT }
     );
 
-    // Daily trend data for chart
+    // Daily trend data for chart (uptime checks only)
     const dailyTrend = await sequelize.query(
       `SELECT
          DATE(mc.checked_at)                                          AS check_date,
@@ -42,7 +48,7 @@ async function getMonthlyStats(req, res) {
          ROUND(AVG(mc.load_time_ms), 0)                              AS avg_load_ms
        FROM monitor_checks mc
        JOIN monitored_urls u ON u.id = mc.url_id AND u.is_deleted = 0
-       WHERE 1=1 ${monthFilter} ${urlFilter}
+       WHERE mc.check_type = 'uptime' ${monthFilter} ${urlFilter}
        GROUP BY DATE(mc.checked_at)
        ORDER BY check_date ASC`,
       { replacements, type: QueryTypes.SELECT }
@@ -52,9 +58,15 @@ async function getMonthlyStats(req, res) {
       success: true,
       data: {
         total_urls,
-        failures:        parseInt(stats?.failures)  || 0,
+        failures:        parseInt(stats?.failures)     || 0,
         uptime_pct:      parseFloat(stats?.uptime_pct) || 0,
         avg_response_ms: parseInt(stats?.avg_response_ms) || 0,
+        avg_html_ms:      parseInt(stats?.avg_html_ms)      || null,
+        avg_css_ms:       parseInt(stats?.avg_css_ms)       || null,
+        avg_js_ms:        parseInt(stats?.avg_js_ms)        || null,
+        avg_image_ms:     parseInt(stats?.avg_image_ms)     || null,
+        avg_full_load_ms: parseInt(stats?.avg_full_load_ms) || null,
+        avg_lcp_ms:       parseInt(stats?.avg_lcp_ms)       || null,
         daily_trend:     dailyTrend,
       },
     });
@@ -80,18 +92,21 @@ async function getRecentFailures(req, res) {
     const rows = await sequelize.query(
       `SELECT
          mc.id,
+         mc.check_type,
          DATE(mc.checked_at)           AS date,
          TIME(mc.checked_at)           AS time,
          u.url,
          u.name                        AS url_name,
          mc.http_status_code,
          mc.load_time_ms,
+         mc.full_load_ms,
          mc.performance_label,
          mc.error_message,
          mc.checked_at
        FROM monitor_checks mc
        JOIN monitored_urls u ON u.id = mc.url_id AND u.is_deleted = 0
        WHERE mc.status = 'down'
+         AND mc.check_type IN ('uptime', 'load_time')
          ${monthFilter} ${urlFilter}
        ORDER BY mc.checked_at DESC
        LIMIT :limit`,

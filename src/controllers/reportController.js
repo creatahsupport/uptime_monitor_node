@@ -6,13 +6,14 @@ const reportService = require('../services/reportService');
 async function getAvailableMonths(req, res) {
   try {
     const { url_id } = req.query;
-    const urlFilter = url_id ? 'WHERE url_id = :urlId' : '';
+    const urlFilter = url_id ? 'AND url_id = :urlId' : '';
     const replacements = url_id ? { urlId: parseInt(url_id) } : {};
     const rows = await sequelize.query(
       `SELECT DISTINCT
          DATE_FORMAT(checked_at, '%Y-%m') AS month_key,
          DATE_FORMAT(checked_at, '%M %Y') AS month_label
        FROM monitor_checks
+       WHERE check_type = 'uptime'
        ${urlFilter}
        ORDER BY month_key DESC`,
       { replacements, type: QueryTypes.SELECT }

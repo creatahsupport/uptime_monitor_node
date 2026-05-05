@@ -40,12 +40,17 @@ exports.updateCronSetting = async (req, res) => {
   }
 };
 
-exports.runMonthlyReportNow = async (_req, res) => {
+exports.runMonthlyReportNow = async (req, res) => {
   try {
-    runMonthlyReportProcess().catch(err =>
+    // Use provided month or fall back to current month for manual runs
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = req.body?.month || currentMonth;
+
+    runMonthlyReportProcess(month).catch(err =>
       console.error('[MonthlyReport] Manual run error:', err.message)
     );
-    res.json({ success: true, message: 'Monthly report process started' });
+    res.json({ success: true, message: `Monthly report process started for ${month}` });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error' });
   }

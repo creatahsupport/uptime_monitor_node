@@ -7,10 +7,27 @@
 USE uptime_monitor;
 
 -- ─────────────────────────────────────────────
--- ALTER: Add soft delete column to monitored_urls
+-- ALTER: Add error_type column to monitor_checks
 -- ─────────────────────────────────────────────
-ALTER TABLE monitored_urls
-  ADD COLUMN IF NOT EXISTS is_deleted TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE monitor_checks
+  ADD COLUMN IF NOT EXISTS error_type ENUM(
+    'dns_error',
+    'connection_refused',
+    'connection_reset',
+    'timeout',
+    'ssl_expired',
+    'ssl_invalid',
+    'server_error',
+    'client_error',
+    'http_error',
+    'network_error',
+    'http_blocked',
+    'server_down',
+    'tcp_error',
+    'content_loading_error',
+    'browser_metrics_unavailable',
+    'browser_error'
+  ) NULL AFTER error_message;
 
 -- ─────────────────────────────────────────────
 -- TEST DATA: March 2026 monitor checks

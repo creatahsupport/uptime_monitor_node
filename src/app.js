@@ -62,7 +62,7 @@ app.use('/api/admin/users', authenticate, adminRoutes);
 
 app.post('/api/monitor/run', authenticate, async (_req, res) => {
   try {
-    await runAllChecks();
+    await runAllChecks({ force: true });
     res.json({ success: true, message: 'Monitor run completed' });
   } catch (err) {
     console.error('Manual run error:', err.message);

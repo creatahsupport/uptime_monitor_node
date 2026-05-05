@@ -20,6 +20,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.7",
     "pdfkit": "^0.14.0",
+    "puppeteer": "^24.41.0",
     "qrcode": "^1.5.4",
     "sequelize": "^6.37.8",
     "speakeasy": "^2.0.0"
