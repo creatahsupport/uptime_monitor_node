@@ -88,11 +88,11 @@ app.post('/api/cron/trigger', async (req, res) => {
 app.use(errorHandler);
 
 // SPA fallback — serve index.html for any non-API route (React Router)
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
-  }
-});
+// app.get('*', (req, res) => {
+//   if (!req.path.startsWith('/api')) {
+//     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+//   }
+// });
 
 async function start() {
   await testConnection();
