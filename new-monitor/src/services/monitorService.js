@@ -1,5 +1,4 @@
 const axios     = require('axios');
-const { Op }    = require('sequelize');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
 require('dotenv').config();
@@ -39,30 +38,32 @@ const BASE_OPTIONS = {
 // ── PageSpeed Insights — full page load + resource breakdown ──────────────────
 
 async function getPageSpeedMetrics(pageUrl) {
-  const apiKey   = process.env.PAGESPEED_API_KEY || '';
-  const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(pageUrl)}&strategy=desktop&category=performance${apiKey ? `&key=${apiKey}` : ''}`;
-  const { data } = await axios.get(endpoint, { timeout: 180000, validateStatus: () => true });
+  try {
+    const apiKey   = process.env.PAGESPEED_API_KEY || '';
+    const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(pageUrl)}&strategy=desktop&category=performance${apiKey ? `&key=${apiKey}` : ''}`;
+    const { data } = await axios.get(endpoint, { timeout: 60000, validateStatus: () => true });
+    const audits   = data?.lighthouseResult?.audits || {};
 
-  if (data?.error) {
-    throw new Error(`PageSpeed API: ${data.error.message || data.error.status}`);
+    // Speed Index = how quickly all visible content finishes loading
+    const speedIndex = audits['speed-index']?.numericValue;
+
+    // Individual resource timings from network requests
+    const networkItems = audits['network-requests']?.details?.items || [];
+    const avg = (items) => {
+      const durations = items.map(i => (i.endTime || 0) - (i.startTime || 0)).filter(d => d > 0);
+      return durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
+    };
+
+    return {
+      full_load_ms:  speedIndex ? Math.round(speedIndex) : null,
+      css_load_ms:   avg(networkItems.filter(r => r.resourceType === 'Stylesheet')),
+      js_load_ms:    avg(networkItems.filter(r => r.resourceType === 'Script')),
+      image_load_ms: avg(networkItems.filter(r => r.resourceType === 'Image')),
+    };
+  } catch (err) {
+    console.warn(`  [WARN] PageSpeed API failed for ${pageUrl}: ${err.message}`);
+    return { full_load_ms: null, css_load_ms: null, js_load_ms: null, image_load_ms: null };
   }
-  if (!data?.lighthouseResult?.audits) {
-    throw new Error('PageSpeed API returned no lighthouse data');
-  }
-
-  const audits = data.lighthouseResult.audits;
-  const num = (key) => {
-    const v = audits[key]?.numericValue;
-    return v != null ? Math.round(v) : null;
-  };
-
-  return {
-    full_load_ms:  num('speed-index'),
-    html_load_ms:  num('first-contentful-paint'),
-    css_load_ms:   num('first-meaningful-paint'),
-    js_load_ms:    num('total-blocking-time'),
-    image_load_ms: num('largest-contentful-paint'),
-  };
 }
 
 async function checkUrl(urlRow) {
@@ -71,61 +72,95 @@ async function checkUrl(urlRow) {
   let errorMessage   = null;
   let errorType      = null;
   let loadTimeMs     = null;
+  let htmlLoadMs     = null;
+  let cssLoadMs      = null;
+  let jsLoadMs       = null;
+  let imageLoadMs    = null;
+  let fullLoadMs     = null;
+  let lcpMs          = null;
 
-  const startTime = Date.now();
   try {
+    const startTime = Date.now();
+    // GET full HTML body for cheerio parsing
     const response = await axios.get(urlRow.url, {
       ...BASE_OPTIONS,
-      timeout: 60000,
-      validateStatus: () => true,
+      timeout: 15000,
+      validateStatus: () => true, // Don't throw on any status code
     });
-    loadTimeMs     = Date.now() - startTime;
+
+    htmlLoadMs = Date.now() - startTime;
+    loadTimeMs = htmlLoadMs;
     httpStatusCode = response.status;
+
+    // Check for HTTP error status codes
     if (httpStatusCode >= 400) {
-      status       = 'down';
-      errorType    = httpStatusCode >= 500 ? 'server_error' : 'client_error';
+      status = 'down';
+      errorType = httpStatusCode >= 500 ? 'server_error' : 'client_error';
       errorMessage = `HTTP ${httpStatusCode} ${response.statusText || ''}`.trim();
     } else if (httpStatusCode >= 200 && httpStatusCode < 400) {
       status = 'up';
     } else {
-      status       = 'down';
-      errorType    = 'http_error';
+      status = 'down';
+      errorType = 'http_error';
       errorMessage = `Unexpected HTTP ${httpStatusCode}`;
     }
+
   } catch (err) {
-    loadTimeMs = Date.now() - startTime;
-    if (err.code === 'ENOTFOUND')                                    { errorType = 'dns_error';          errorMessage = 'DNS resolution failed - domain not found'; }
-    else if (err.code === 'ECONNREFUSED')                            { errorType = 'connection_refused';  errorMessage = 'Connection refused - server not accepting connections'; }
-    else if (err.code === 'ECONNRESET')                              { errorType = 'connection_reset';    errorMessage = 'Connection reset by server'; }
-    else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') { errorType = 'timeout';           errorMessage = 'Site is down'; }
-    else if (err.code === 'CERT_HAS_EXPIRED')                        { errorType = 'ssl_expired';        errorMessage = 'SSL certificate has expired'; }
-    else if (err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE')         { errorType = 'ssl_invalid';        errorMessage = 'SSL certificate is invalid or untrusted'; }
-    else if (err.response) { httpStatusCode = err.response.status; errorType = httpStatusCode >= 500 ? 'server_error' : 'client_error'; errorMessage = `HTTP ${httpStatusCode}: ${err.response.statusText || 'Unknown error'}`; }
-    else                                                              { errorType = 'network_error';      errorMessage = 'Site is down'; }
+    loadTimeMs = Date.now() - (Date.now() - 15000); // Approximate timeout time
+
+    // Categorize different types of errors
+    if (err.code === 'ENOTFOUND') {
+      errorType = 'dns_error';
+      errorMessage = 'DNS resolution failed - domain not found';
+    } else if (err.code === 'ECONNREFUSED') {
+      errorType = 'connection_refused';
+      errorMessage = 'Connection refused - server not accepting connections';
+    } else if (err.code === 'ECONNRESET') {
+      errorType = 'connection_reset';
+      errorMessage = 'Connection reset by server';
+    } else if (err.code === 'ETIMEDOUT') {
+      errorType = 'timeout';
+      errorMessage = 'Connection timed out';
+    } else if (err.code === 'CERT_HAS_EXPIRED') {
+      errorType = 'ssl_expired';
+      errorMessage = 'SSL certificate has expired';
+    } else if (err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
+      errorType = 'ssl_invalid';
+      errorMessage = 'SSL certificate is invalid or untrusted';
+    } else if (err.response) {
+      // Server responded with error status
+      httpStatusCode = err.response.status;
+      errorType = httpStatusCode >= 500 ? 'server_error' : 'client_error';
+      errorMessage = `HTTP ${httpStatusCode}: ${err.response.statusText || 'Unknown error'}`;
+    } else {
+      errorType = 'network_error';
+      errorMessage = `Network error: ${err.message}`;
+    }
+
     status = 'down';
   }
 
-  const performanceLabel = status === 'up' ? classifyLoadTime(loadTimeMs) : null;
-
-  // Duplicate guard — skip if this URL was already checked in the last 60 seconds
-  const sixtySecsAgo = new Date(Date.now() - 60 * 1000);
-  const recentCheck = await MonitorCheck.findOne({
-    where: { url_id: urlRow.id, check_type: 'uptime', checked_at: { [Op.gte]: sixtySecsAgo } },
-  });
-  if (recentCheck) {
-    console.log(`  [SKIP] ${urlRow.url} — already checked within last 60s`);
-    return { status, loadTimeMs, performanceLabel, httpStatusCode, errorMessage, errorType };
+  // Collect full page load + resource breakdown via PageSpeed API (works on cPanel — never affects up/down status)
+  if (status === 'up') {
+    const metrics = await getPageSpeedMetrics(urlRow.url);
+    fullLoadMs  = metrics.full_load_ms;
+    cssLoadMs   = metrics.css_load_ms;
+    jsLoadMs    = metrics.js_load_ms;
+    imageLoadMs = metrics.image_load_ms;
   }
+
+  const performanceLabel = status === 'up' ? classifyLoadTime(fullLoadMs ?? loadTimeMs) : null;
 
   await MonitorCheck.create({
     url_id:            urlRow.id,
     status,
-    check_type:        'uptime',
     load_time_ms:      loadTimeMs,
-    full_load_ms:      null,
-    css_load_ms:       null,
-    js_load_ms:        null,
-    image_load_ms:     null,
+    html_load_ms:      htmlLoadMs,
+    css_load_ms:       cssLoadMs,
+    js_load_ms:        jsLoadMs,
+    image_load_ms:     imageLoadMs,
+    full_load_ms:      fullLoadMs,
+    lcp_ms:            lcpMs,
     performance_label: performanceLabel,
     http_status_code:  httpStatusCode,
     error_message:     errorMessage,
@@ -216,23 +251,14 @@ async function handleStatusTransition(urlRow, newStatus, result) {
   return 'unchanged';
 }
 
-let isRunning  = false;
-let lastRunAt  = 0;
-const MIN_INTERVAL_MS = 5 * 60 * 1000; // minimum 5 minutes between runs
+let isRunning = false;
 
-async function runAllChecks({ force = false } = {}) {
+async function runAllChecks() {
   if (isRunning) {
     console.log('⏭  Monitor run skipped — previous run still in progress.');
     return;
   }
-  const now = Date.now();
-  if (!force && now - lastRunAt < MIN_INTERVAL_MS) {
-    const waitSec = Math.round((MIN_INTERVAL_MS - (now - lastRunAt)) / 1000);
-    console.log(`⏭  Monitor run skipped — last run was ${Math.round((now - lastRunAt)/1000)}s ago (next allowed in ${waitSec}s).`);
-    return;
-  }
   isRunning = true;
-  lastRunAt  = now;
   console.log(`[${new Date().toISOString()}] Starting monitor run…`);
 
   try {
@@ -279,70 +305,4 @@ async function runAllChecks({ force = false } = {}) {
   }
 }
 
-async function runDailyLoadTimeChecks() {
-  console.log(`[${new Date().toISOString()}] Starting daily load time checks…`);
-  try {
-    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
-
-    if (!urls.length) {
-      console.log('No active URLs for load time check.');
-      return;
-    }
-
-    // Run sequentially with a 3s gap to avoid PageSpeed API rate limits
-    const results = [];
-    for (const urlRow of urls) {
-      // Skip if already checked today (first run only)
-      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      const alreadyChecked = await MonitorCheck.findOne({
-        where: { url_id: urlRow.id, check_type: 'load_time', checked_at: { [Op.gte]: todayStart } },
-      });
-      if (alreadyChecked) {
-        console.log(`  [LOAD] ${urlRow.name} — already checked today, skipping`);
-        continue;
-      }
-
-      try {
-        const metrics = await getPageSpeedMetrics(urlRow.url);
-        const performanceLabel = metrics.full_load_ms ? classifyLoadTime(metrics.full_load_ms) : null;
-
-        await MonitorCheck.create({
-          url_id:            urlRow.id,
-          status:            'up',
-          check_type:        'load_time',
-          load_time_ms:      metrics.full_load_ms,
-          full_load_ms:      metrics.full_load_ms,
-          html_load_ms:      metrics.html_load_ms,
-          css_load_ms:       metrics.css_load_ms,
-          js_load_ms:        metrics.js_load_ms,
-          image_load_ms:     metrics.image_load_ms,
-          performance_label: performanceLabel,
-          http_status_code:  null,
-          error_message:     null,
-          error_type:        null,
-          checked_at:        new Date(),
-        });
-
-        console.log(`  [LOAD] ${urlRow.name} — full=${metrics.full_load_ms}ms html=${metrics.html_load_ms}ms css=${metrics.css_load_ms}ms js=${metrics.js_load_ms}ms img=${metrics.image_load_ms}ms`);
-        results.push({ urlRow, metrics });
-      } catch (err) {
-        console.error(`  [LOAD ERROR] ${urlRow.name}:`, err.message);
-        await MonitorCheck.create({
-          url_id:        urlRow.id,
-          status:        'down',
-          check_type:    'load_time',
-          error_message: err.message,
-          checked_at:    new Date(),
-        });
-      }
-      // 3-second gap between requests to avoid rate limiting
-      await new Promise(r => setTimeout(r, 3000));
-    }
-
-    console.log(`[${new Date().toISOString()}] Daily load time checks complete — ${urls.length} URLs checked.`);
-  } catch (err) {
-    console.error('Daily load time check failed:', err.message);
-  }
-}
-
-module.exports = { runAllChecks, runDailyLoadTimeChecks, checkUrl, handleStatusTransition };
+module.exports = { runAllChecks, checkUrl, handleStatusTransition };
