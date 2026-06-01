@@ -2,6 +2,7 @@ const axios     = require('axios');
 const { Op }    = require('sequelize');
 const { MonitoredUrl, MonitorCheck, Incident, InternalRecipient } = require('../models');
 const emailService = require('./emailService');
+const { sendDowntimeAlert, sendRecoveryAlert, sendDowntimeSummary } = require('./cliqService');
 require('dotenv').config();
 
 const GOOD_MS    = parseInt(process.env.LOAD_TIME_GOOD)    || 1000;  // ≤1s Good
@@ -154,14 +155,19 @@ async function checkUrl(urlRow, uptimeMonitors = null) {
       }
     } catch (err) {
       loadTimeMs = Date.now() - startTime;
-      if (err.code === 'ENOTFOUND')                      { errorType = 'dns_error';           errorMessage = 'DNS resolution failed - domain not found'; }
-      else if (err.code === 'ECONNREFUSED')              { errorType = 'connection_refused';   errorMessage = 'Connection refused - server not accepting connections'; }
-      else if (err.code === 'ECONNRESET')                { errorType = 'connection_reset';     errorMessage = 'Connection reset by server'; }
-      else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') { errorType = 'timeout'; errorMessage = 'Site is down'; }
-      else if (err.code === 'CERT_HAS_EXPIRED')          { errorType = 'ssl_expired';          errorMessage = 'SSL certificate has expired'; }
-      else if (err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') { errorType = 'ssl_invalid';   errorMessage = 'SSL certificate is invalid or untrusted'; }
+      // Cloudflare-convention codes for non-HTTP network failures (520–526)
+      if (err.code === 'ENOTFOUND')                        { errorType = 'dns_error';          httpStatusCode = 523; errorMessage = 'DNS resolution failed - domain not found'; }
+      else if (err.code === 'ECONNREFUSED')              { errorType = 'connection_refused';   httpStatusCode = 521; errorMessage = 'Connection refused - server not accepting connections'; }
+      else if (err.code === 'ECONNRESET')                { errorType = 'connection_reset';     httpStatusCode = 521; errorMessage = 'Connection reset by server'; }
+      else if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') { errorType = 'timeout'; httpStatusCode = 522; errorMessage = 'Network error: timeout of 60000ms exceeded'; }
+      else if (err.code === 'EHOSTUNREACH')              { errorType = 'network_error';        httpStatusCode = 523; errorMessage = 'Host unreachable'; }
+      else if (err.code === 'CERT_HAS_EXPIRED')          { errorType = 'ssl_expired';          httpStatusCode = 526; errorMessage = 'SSL certificate has expired'; }
+      else if (err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') { errorType = 'ssl_invalid';   httpStatusCode = 526; errorMessage = 'SSL certificate is invalid or untrusted'; }
+      else if (err.code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || err.code === 'SELF_SIGNED_CERT_IN_CHAIN') { errorType = 'ssl_invalid'; httpStatusCode = 526; errorMessage = 'SSL certificate is self-signed'; }
+      else if (err.code === 'ERR_TLS_CERT_ALTNAME_INVALID') { errorType = 'ssl_invalid';      httpStatusCode = 526; errorMessage = 'SSL certificate hostname mismatch'; }
+      else if (err.code === 'EPROTO')                    { errorType = 'ssl_invalid';          httpStatusCode = 525; errorMessage = 'SSL/TLS protocol error'; }
       else if (err.response) { httpStatusCode = err.response.status; errorType = httpStatusCode >= 500 ? 'server_error' : 'client_error'; errorMessage = `HTTP ${httpStatusCode}: ${err.response.statusText || 'Unknown error'}`; }
-      else                                               { errorType = 'network_error';        errorMessage = 'Site is down'; }
+      else                                               { errorType = 'network_error';        httpStatusCode = 520; errorMessage = `Site is down (${err.code || err.message})`; }
       status = 'down';
     }
   }
@@ -241,6 +247,13 @@ async function handleStatusTransition(urlRow, newStatus, result) {
       console.error(`[ALERT ERROR] Failed to send downtime alert for ${urlRow.name}:`, e);
     }
 
+    await sendDowntimeAlert({
+      url:          urlRow.url,
+      detectedAt:   new Date(),
+      httpStatus:   result.httpStatusCode,
+      errorMessage: result.errorMessage,
+    });
+
     return 'down_started';
   }
 
@@ -269,6 +282,11 @@ async function handleStatusTransition(urlRow, newStatus, result) {
       } catch (e) {
         console.error('Failed to send recovery alert:', e.message);
       }
+
+      await sendRecoveryAlert({
+        url:         urlRow.url,
+        recoveredAt: new Date(),
+      });
     }
 
     return 'recovered';
@@ -297,7 +315,7 @@ async function runAllChecks({ force = false } = {}) {
   console.log(`[${new Date().toISOString()}] Starting monitor run…`);
 
   try {
-    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
+    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false, is_paused: false } });
 
     if (!urls.length) {
       console.log('No active URLs to check.');
@@ -321,13 +339,19 @@ async function runAllChecks({ force = false } = {}) {
         const result = await checkUrl(urlRow, uptimeMonitors);
         const transition = await handleStatusTransition(urlRow, result.status, result);
         console.log(`  [${result.status.toUpperCase()}] ${urlRow.name} — HTTP ${result.httpStatusCode ?? 'ERR'} — ${result.loadTimeMs}ms — ${transition}`);
-        return { urlRow, result };
+        return { urlRow, result, transition };
       })
     );
 
     const failures = results
-      .filter(r => r.status === 'fulfilled' && r.value.result.status === 'down')
-      .map(r => ({ name: r.value.urlRow.name, url: r.value.urlRow.url, detected_at: new Date() }));
+      .filter(r => r.status === 'fulfilled' && r.value.transition === 'down_started')
+      .map(r => ({
+        name:         r.value.urlRow.name,
+        url:          r.value.urlRow.url,
+        detected_at:  new Date(),
+        httpStatus:   r.value.result.httpStatusCode,
+        errorMessage: r.value.result.errorMessage,
+      }));
 
     results
       .filter(r => r.status === 'rejected')
@@ -344,6 +368,8 @@ async function runAllChecks({ force = false } = {}) {
       } catch (e) {
         console.error('  Failed to send internal summary:', e.message);
       }
+
+      await sendDowntimeSummary(failures);
     }
 
     console.log(`[${new Date().toISOString()}] Run complete — ${urls.length} checked, ${failures.length} down.`);
@@ -355,7 +381,7 @@ async function runAllChecks({ force = false } = {}) {
 async function runDailyLoadTimeChecks() {
   console.log(`[${new Date().toISOString()}] Starting daily load time checks…`);
   try {
-    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false } });
+    const urls = await MonitoredUrl.findAll({ where: { is_active: true, is_deleted: false, is_paused: false } });
 
     if (!urls.length) {
       console.log('No active URLs for load time check.');

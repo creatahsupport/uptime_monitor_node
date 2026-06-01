@@ -25,6 +25,10 @@ async function create(req, res) {
   const validationError = validateRecipientEmail(email);
   if (validationError) return res.status(400).json({ success: false, message: validationError });
   try {
+    const userName = await InternalRecipient.findOne({ where: { name: name.trim() } });
+    if (userName) {
+      return res.status(409).json({ success: false, message: 'This name is already registered, please use another name' });
+    }
     const recipient = await InternalRecipient.create({ name: name || null, email: email.trim() });
     res.status(201).json({ success: true, data: recipient });
   } catch (err) {

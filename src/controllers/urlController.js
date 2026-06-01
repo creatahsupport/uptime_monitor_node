@@ -1,4 +1,4 @@
-const { fn, col } = require('sequelize');
+const { fn, col, Op } = require('sequelize');
 const { MonitoredUrl, MonitorCheck } = require('../models');
 
 function normalizeUrl(raw) {
@@ -61,6 +61,12 @@ async function create(req, res) {
   }
 
   try {
+    const exsiting = await MonitoredUrl.findOne({where:{url:url.trim(), is_deleted: false}});
+    if(exsiting) return res.status(409).json({success: false, message: "This website URL is already monitored, please use another URL"});
+
+    // const exsitingEmail = await  MonitoredUrl.findOne({where : { client_email : client_email.trim(), is_deleted: false}});
+    // if(exsitingEmail) return res.status(409).json({success: false, message: "This email is already registered, please use another email"});
+
     const record = await MonitoredUrl.create({ name, url: url.trim(), client_email: client_email.trim() });
     res.status(201).json({ success: true, data: record });
   } catch (err) {
@@ -112,15 +118,26 @@ async function remove(req, res) {
 }
 
 async function getChecks(req, res) {
-  const limit  = Math.min(parseInt(req.query.limit) || 50, 200);
-  const offset = parseInt(req.query.offset) || 0;
+  const days   = parseInt(req.query.days)   || null;
+  const limit  = days
+    ? Math.min(days * 300, 3000)
+    : Math.min(parseInt(req.query.limit) || 200, 200);
+  const offset = days ? 0 : (parseInt(req.query.offset) || 0);
+
   try {
     const url = await MonitoredUrl.findOne({ where: { id: req.params.id, is_deleted: false } });
     if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
+
+    const where = { url_id: req.params.id };
+    if (days) {
+      where.checked_at = { [Op.gte]: new Date(Date.now() - days * 86400000) };
+    }
+
     const checks = await MonitorCheck.findAll({
-      where: { url_id: req.params.id },
+      where,
       order: [['checked_at', 'DESC']],
-      limit, offset,
+      limit,
+      offset,
     });
     res.json({ success: true, data: checks });
   } catch (err) {
@@ -128,4 +145,51 @@ async function getChecks(req, res) {
   }
 }
 
-module.exports = { getAll, getOne, create, update, remove, getChecks };
+async function getExpiry(req, res) {
+  try {
+    const url = await MonitoredUrl.findOne({
+      where: { id: req.params.id, is_deleted: false },
+      attributes: [
+        'id', 'name', 'url',
+        'ssl_expiry_date', 'ssl_issuer', 'ssl_days_remaining',
+        'domain_expiry_date', 'domain_days_remaining',
+        'last_expiry_checked_at',
+      ],
+    });
+    if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
+    res.json({ success: true, data: url });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+async function getAllExpiry(req, res) {
+  try {
+    const urls = await MonitoredUrl.findAll({
+      where: { is_deleted: false, is_active: true },
+      attributes: [
+        'id', 'name', 'url',
+        'ssl_expiry_date', 'ssl_issuer', 'ssl_days_remaining',
+        'domain_expiry_date', 'domain_days_remaining',
+        'last_expiry_checked_at',
+      ],
+      order: [['ssl_days_remaining', 'ASC']],
+    });
+    res.json({ success: true, data: urls });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+async function togglePause(req, res) {
+  try {
+    const url = await MonitoredUrl.findOne({ where: { id: req.params.id, is_deleted: false } });
+    if (!url) return res.status(404).json({ success: false, message: 'URL not found' });
+    await url.update({ is_paused: !url.is_paused });
+    res.json({ success: true, is_paused: url.is_paused });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+module.exports = { getAll, getOne, create, update, remove, getChecks, getExpiry, getAllExpiry, togglePause };

@@ -28,8 +28,8 @@ async function startCronJob() {
 
   scheduleJob(schedule);
   scheduleLoadTimeJob();
-}
-
+} 
+ 
 function scheduleJob(schedule) {
   if (currentJob) {
     currentJob.stop();
@@ -59,7 +59,7 @@ function scheduleLoadTimeJob() {
   currentLoadTimeJob = cron.schedule(loadTimeCron, async () => {
     try {
       await runDailyLoadTimeChecks();
-    } catch (err) {
+    } catch (err) { 
       console.error('Daily load time job error:', err.message);
     }
   }, { timezone: tz });
