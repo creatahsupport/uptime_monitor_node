@@ -284,4 +284,146 @@ async function sendMonthlyReport({ clientEmail, urlName, month, pdfBuffer }) {
   });
 }
 
-module.exports = { sendDowntimeAlert, sendRecoveryAlert, sendInternalFailureSummary, sendMonthlyReport };
+// ── Client: SSL Expiry Warning ────────────────────────────────────────────────
+async function sendSSLExpiryAlert({ clientEmail, url, sslExpiryDate, daysRemaining, sslIssuer }) {
+  const urgency  = daysRemaining <= 7   ? '#a32d2d'
+                 : daysRemaining <= 30  ? '#b45309'
+                 : '#1a56db';
+  const label    = daysRemaining <= 7   ? 'CRITICAL'
+                 : daysRemaining <= 30  ? 'WARNING'
+                 : 'NOTICE';
+
+  const header = `
+    <div style="background:${urgency};padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
+      <p style="color:#fff;font-size:18px;font-weight:bold;font-family:Arial,sans-serif;margin:0;">&#128274; SSL Certificate Expiry ${label}</p>
+      <p style="color:rgba(255,255,255,.75);font-size:12px;margin:6px 0 0;font-family:Arial,sans-serif;">Creatah Software Technologies &bull; Automated Monitor</p>
+    </div>`;
+
+  const banner = `
+    <div style="background:${daysRemaining <= 7 ? '#fcebeb' : daysRemaining <= 30 ? '#fffbeb' : '#e8f0fe'};padding:11px 32px;border-left:4px solid ${urgency};">
+      <span style="color:${urgency};font-size:13px;font-weight:bold;font-family:Arial,sans-serif;">
+        Your SSL certificate expires in <strong>${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}</strong> — please renew it before it expires.
+      </span>
+    </div>`;
+
+  const body = `
+    <div style="padding:26px 32px;font-family:Arial,sans-serif;">
+      <p style="color:#333;font-size:14px;margin:0 0 8px;">Dear Customer,</p>
+      <p style="color:#555;font-size:13px;line-height:1.65;margin:0 0 20px;">
+        Our monitoring system has detected that the SSL certificate for your website is expiring soon.
+        An expired SSL certificate will cause browsers to show a security warning to your visitors,
+        which may affect your website's traffic and credibility.
+      </p>
+
+      <p style="color:#333;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.6px;margin:0 0 8px;">SSL Certificate Details</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:22px;font-size:12px;font-family:Arial,sans-serif;">
+        <tr>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;width:35%;background:#f2f2f2;">Website URL</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;"><a href="${url}" style="color:#185fa5;">${url}</a></td>
+        </tr>
+        <tr style="background:#f9f9f9;">
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">SSL Issuer</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${sslIssuer || 'Unknown'}</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Expiry Date</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${new Date(sslExpiryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+        </tr>
+        <tr style="background:#f9f9f9;">
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Days Remaining</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;">
+            <span style="background:${urgency};color:#fff;padding:2px 9px;border-radius:12px;font-size:11px;">${daysRemaining} days</span>
+          </td>
+        </tr>
+      </table>
+
+      <div style="background:#fff8f8;border-radius:6px;border:1px solid #f5c6c6;padding:14px 18px;margin-bottom:10px;">
+        <p style="margin:0 0 5px;font-size:12px;color:#a32d2d;font-weight:bold;font-family:Arial,sans-serif;">&#9888; Action Required</p>
+        <p style="margin:0;font-size:12px;color:#555;line-height:1.6;font-family:Arial,sans-serif;">
+          Please contact your hosting provider or SSL certificate issuer to renew your SSL certificate before it expires.
+        </p>
+      </div>
+      <p style="margin:10px 0 0;font-size:11px;color:#999;font-family:Arial,sans-serif;">This is an automated alert. Do not reply to this email.</p>
+    </div>`;
+
+  await transporter.sendMail({
+    from: FROM,
+    to: clientEmail,
+    subject: `[SSL ${label}] Your SSL certificate expires in ${daysRemaining} days — ${new URL(url).hostname}`,
+    html: emailWrapper(header, banner, body),
+  });
+}
+
+// ── Client: Domain Expiry Warning ─────────────────────────────────────────────
+async function sendDomainExpiryAlert({ clientEmail, url, domainExpiryDate, daysRemaining }) {
+  const urgency  = daysRemaining <= 7   ? '#a32d2d'
+                 : daysRemaining <= 30  ? '#b45309'
+                 : '#1a56db';
+  const label    = daysRemaining <= 7   ? 'CRITICAL'
+                 : daysRemaining <= 30  ? 'WARNING'
+                 : 'NOTICE';
+
+  const header = `
+    <div style="background:${urgency};padding:24px 32px;text-align:center;border-radius:8px 8px 0 0;">
+      <p style="color:#fff;font-size:18px;font-weight:bold;font-family:Arial,sans-serif;margin:0;">&#127758; Domain Expiry ${label}</p>
+      <p style="color:rgba(255,255,255,.75);font-size:12px;margin:6px 0 0;font-family:Arial,sans-serif;">Creatah Software Technologies &bull; Automated Monitor</p>
+    </div>`;
+
+  const banner = `
+    <div style="background:${daysRemaining <= 7 ? '#fcebeb' : daysRemaining <= 30 ? '#fffbeb' : '#e8f0fe'};padding:11px 32px;border-left:4px solid ${urgency};">
+      <span style="color:${urgency};font-size:13px;font-weight:bold;font-family:Arial,sans-serif;">
+        Your domain name expires in <strong>${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}</strong> — please renew it to avoid losing your website.
+      </span>
+    </div>`;
+
+  const hostname = new URL(url).hostname;
+
+  const body = `
+    <div style="padding:26px 32px;font-family:Arial,sans-serif;">
+      <p style="color:#333;font-size:14px;margin:0 0 8px;">Dear Customer,</p>
+      <p style="color:#555;font-size:13px;line-height:1.65;margin:0 0 20px;">
+        Our monitoring system has detected that your domain name is expiring soon.
+        If your domain expires without renewal, your website and email services associated
+        with this domain will stop working and the domain may become available for others to register.
+      </p>
+
+      <p style="color:#333;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.6px;margin:0 0 8px;">Domain Details</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:22px;font-size:12px;font-family:Arial,sans-serif;">
+        <tr>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;width:35%;background:#f2f2f2;">Domain Name</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${hostname}</td>
+        </tr>
+        <tr style="background:#f9f9f9;">
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Website URL</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;"><a href="${url}" style="color:#185fa5;">${url}</a></td>
+        </tr>
+        <tr>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Expiry Date</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#333;">${new Date(domainExpiryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+        </tr>
+        <tr style="background:#f9f9f9;">
+          <td style="padding:9px 12px;border:1px solid #ddd;color:#555;font-weight:bold;background:#f2f2f2;">Days Remaining</td>
+          <td style="padding:9px 12px;border:1px solid #ddd;">
+            <span style="background:${urgency};color:#fff;padding:2px 9px;border-radius:12px;font-size:11px;">${daysRemaining} days</span>
+          </td>
+        </tr>
+      </table>
+
+      <div style="background:#fff8f8;border-radius:6px;border:1px solid #f5c6c6;padding:14px 18px;margin-bottom:10px;">
+        <p style="margin:0 0 5px;font-size:12px;color:#a32d2d;font-weight:bold;font-family:Arial,sans-serif;">&#9888; Action Required</p>
+        <p style="margin:0;font-size:12px;color:#555;line-height:1.6;font-family:Arial,sans-serif;">
+          Please contact your domain registrar to renew your domain name before it expires to ensure uninterrupted service.
+        </p>
+      </div>
+      <p style="margin:10px 0 0;font-size:11px;color:#999;font-family:Arial,sans-serif;">This is an automated alert. Do not reply to this email.</p>
+    </div>`;
+
+  await transporter.sendMail({
+    from: FROM,
+    to: clientEmail,
+    subject: `[DOMAIN ${label}] Your domain expires in ${daysRemaining} days — ${hostname}`,
+    html: emailWrapper(header, banner, body),
+  });
+}
+
+module.exports = { sendDowntimeAlert, sendRecoveryAlert, sendInternalFailureSummary, sendMonthlyReport, sendSSLExpiryAlert, sendDomainExpiryAlert };

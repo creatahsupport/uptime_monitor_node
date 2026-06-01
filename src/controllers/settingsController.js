@@ -1,6 +1,7 @@
 const { Setting } = require('../models');
 const { rescheduleCronJob } = require('../jobs/monitorJob');
 const { rescheduleMonthlyReportJob, runMonthlyReportProcess } = require('../jobs/monthlyReportJob');
+const { rescheduleExpiryJob } = require('../jobs/expiryCheckJob');
 
 exports.getCronSetting = async (req, res) => {
   try {
@@ -96,11 +97,79 @@ exports.updateMonthlyReportDay = async (req, res) => {
   }
 };
 
+exports.getExpiryCronSetting = async (req, res) => {
+  try {
+    const setting = await Setting.findOne({ where: { key: 'expiry_cron_time' } });
+    res.json({ success: true, data: { schedule: setting?.value || '0 15 * * *' } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+exports.updateExpiryCronSetting = async (req, res) => {
+  try {
+    const { schedule } = req.body;
+    if (!schedule) return res.status(400).json({ success: false, message: 'Schedule is required' });
+
+    const cron = require('node-cron');
+    if (!cron.validate(schedule)) {
+      return res.status(400).json({ success: false, message: `Invalid cron expression: "${schedule}"` });
+    }
+
+    await rescheduleExpiryJob(schedule);
+    res.json({ success: true, message: 'Expiry cron schedule updated', data: { schedule } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+exports.getExpiryThresholds = async (req, res) => {
+  try {
+    const [sslSetting, domainSetting] = await Promise.all([
+      Setting.findOne({ where: { key: 'ssl_warn_days' } }),
+      Setting.findOne({ where: { key: 'domain_warn_days' } }),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        ssl_warn_days:    sslSetting    ? parseInt(sslSetting.value)    : 30,
+        domain_warn_days: domainSetting ? parseInt(domainSetting.value) : 30,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+exports.updateExpiryThresholds = async (req, res) => {
+  try {
+    const { ssl_warn_days, domain_warn_days } = req.body;
+
+    if (ssl_warn_days !== undefined) {
+      const val = parseInt(ssl_warn_days);
+      if (isNaN(val) || val < 1 || val > 365)
+        return res.status(400).json({ success: false, message: 'ssl_warn_days must be between 1 and 365' });
+      await Setting.upsert({ key: 'ssl_warn_days', value: String(val) });
+    }
+
+    if (domain_warn_days !== undefined) {
+      const val = parseInt(domain_warn_days);
+      if (isNaN(val) || val < 1 || val > 365)
+        return res.status(400).json({ success: false, message: 'domain_warn_days must be between 1 and 365' });
+      await Setting.upsert({ key: 'domain_warn_days', value: String(val) });
+    }
+
+    res.json({ success: true, message: 'Expiry thresholds updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 exports.toggleCronStatus = async (req, res) => {
   try {
     const { enabled } = req.body;
     const { setCronEnabled } = require('../jobs/monitorJob');
-    
+
     await setCronEnabled(enabled);
     res.json({ success: true, message: `Monitoring ${enabled ? 'resumed' : 'paused'} successfully` });
   } catch (error) {
@@ -108,3 +177,4 @@ exports.toggleCronStatus = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error toggling status' });
   }
 };
+

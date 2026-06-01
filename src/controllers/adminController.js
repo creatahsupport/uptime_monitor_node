@@ -5,7 +5,8 @@ const { User } = require('../models');
 async function listUsers(req, res) {
   try {
     const users = await User.findAll({
-      attributes: ['id', 'username', 'role', 'totp_enabled', 'is_deleted', 'created_at'],
+      where: { is_deleted: false },
+      attributes: ['id', 'username', 'role', 'totp_enabled', 'created_at'],
       order: [['id', 'ASC']],
     });
     res.json({ success: true, users });
