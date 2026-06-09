@@ -82,7 +82,7 @@ function scheduleMonthlyJob(day, hour, minute) {
   if (currentMonthlyJob) {
     currentMonthlyJob.stop();
   }
-  const cronExpr = `${minute} ${hour} ${day} * *`;
+  const cronExpr = `${minute} ${hour} ${day} * *`; 
   const tz = process.env.TZ || 'Asia/Kolkata';
   currentMonthlyJob = cron.schedule(cronExpr, () => {
     runMonthlyReportProcess();

@@ -100,7 +100,12 @@ exports.updateMonthlyReportDay = async (req, res) => {
 exports.getExpiryCronSetting = async (req, res) => {
   try {
     const setting = await Setting.findOne({ where: { key: 'expiry_cron_time' } });
-    res.json({ success: true, data: { schedule: setting?.value || '0 15 * * *' } });
+    const cronValue = setting?.value || '0 15 * * *';
+    const [minutePart, hourPart] = cronValue.split(' ');
+    const hour = Number.isNaN(parseInt(hourPart, 10)) ? 15 : parseInt(hourPart, 10);
+    const minute = Number.isNaN(parseInt(minutePart, 10)) ? 0 : parseInt(minutePart, 10);
+
+    res.json({ success: true, data: { hour, minute } });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -108,17 +113,26 @@ exports.getExpiryCronSetting = async (req, res) => {
 
 exports.updateExpiryCronSetting = async (req, res) => {
   try {
-    const { schedule } = req.body;
-    if (!schedule) return res.status(400).json({ success: false, message: 'Schedule is required' });
+    const hour = parseInt(req.body.hour);
+    const minute = parseInt(req.body.minute);
+    if (isNaN(hour) || hour < 0 || hour > 23) {
+      return res.status(400).json({ success: false, message: 'Hours must be between 0 and 23' });
+    }
+    if (isNaN(minute) || minute < 0 || minute > 59) {
+      return res.status(400).json({ success: false, message: 'Minutes must be between 0 and 59' });
+    }
 
+    // Create cron expression: "minute hour * * *" (runs at specific hour:minute every day)
+    const schedule = `${minute} ${hour} * * *`;
     const cron = require('node-cron');
     if (!cron.validate(schedule)) {
       return res.status(400).json({ success: false, message: `Invalid cron expression: "${schedule}"` });
     }
 
     await rescheduleExpiryJob(schedule);
-    res.json({ success: true, message: 'Expiry cron schedule updated', data: { schedule } });
+    res.json({ success: true, message: 'Expiry cron schedule updated', data: { hour, minute } });
   } catch (error) {
+    console.error('Error updating expiry cron setting:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };

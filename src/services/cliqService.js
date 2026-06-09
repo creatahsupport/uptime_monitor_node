@@ -256,4 +256,5 @@ module.exports = {
   sendDomainExpiryAlert,
   sendExpiryReport,
   sendDowntimeSummary,
+  fmtDate,
 };

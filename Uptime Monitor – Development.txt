@@ -1,0 +1,89 @@
+Uptime Monitor – Development and Enhancement Work Summary
+
+Project Overview : 
+
+The Uptime Monitor project focuses on monitoring website availability, managing incidents, tracking domain and SSL certificate expirations, generating reports, and sending automated notifications through integrated communication channels.
+
+Bug Fixes and Issue Resolution 
+
+Bug #130
+
+Successfully resolved multiple issues across various modules:
+
+Fixed password update functionality in the Admin User module.
+Resolved duplicate validation issues in URL Management.
+Fixed duplicate full-name validation issues in Email Recipients.
+Resolved Monthly Report cron execution issues in Cron Settings.
+Fixed Admin User delete functionality.
+Notification and Cron Fixes
+Fixed downtime notification delivery issues to Zoho Cliq.
+Investigated and resolved cron-related notification failures.
+Verified all cron configurations and API integrations.
+Currently working on resolving repeated Domain Expiry and SSL Expiry notifications being sent to Zoho Cliq.
+Feature Development
+Feature #135 – Domain and SSL Expiry Monitoring
+Domain & SSL Expiry Tracking
+
+Implemented dynamic tracking functionality for:
+
+Domain Expiry Dates
+SSL Certificate Expiry Dates
+
+within the URL Management module.
+
+Zoho Cliq Integration
+
+Implemented Zoho Cliq webhook integration to provide automated alerts for:
+
+Domain expiry notifications
+SSL certificate expiry notifications
+Downtime alerts
+Feature #140 – Monitor Details and Incident Management
+UI Development
+
+Completed user interface implementation for:
+
+Monitor Details Page
+Incident Management Module
+Backend Functionality
+
+Implemented complete functionality for:
+
+Detailed monitor insights
+Incident tracking and management
+Centralized monitoring information display
+Enhancements and Fixes
+Removed domain redirection behavior when clicking monitored domains.
+Fixed empty time-slot bucket issues in the 24-hour monitoring view.
+Added Pause/Resume cron functionality for individual domains.
+Resolved Azure server-related issues impacting monitoring services.
+Cron Settings Enhancements
+
+Developed and completed Domain Expiry and SSL Expiry Settings functionality.
+
+API and Dashboard Improvements
+API Enhancements
+Added branch name validation in the Login API.
+Dashboard Improvements
+Updated dashboard date formatting for better readability and consistency.
+Infrastructure and Deployment Activities
+
+Azure Deployment
+
+Moved backend application files to the Azure server.
+Verified successful deployment and execution.
+Database Migration
+Configured MySQL Workbench with Azure Database.
+Migrated the latest local database to the Azure environment.
+Validated database connectivity and application functionality.
+Verification Activities
+Performed API verification.
+Conducted cron configuration validation.
+Confirmed successful integration between application services and Azure infrastructure.
+
+Local Development Environment Setup
+
+SonarQube Setup
+Successfully configured and executed:
+
+1.Uptime Monitor Backend locally.

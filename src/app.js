@@ -1,4 +1,4 @@
-require("dotenv").config();
+require('dotenv').config();
 
 // ✅ Validate required environment variables
 const REQUIRED_ENV = ["JWT_SECRET", "DB_HOST", "DB_USER", "DB_NAME"];
